@@ -1,0 +1,282 @@
+.saved-prompts-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  z-index: 20;
+  max-height: 400px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.saved-prompts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.saved-prompts-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.saved-prompts-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.saved-prompts-add-btn:hover {
+  background: var(--accent-hover);
+}
+
+.saved-prompts-search {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.saved-prompts-search input {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.saved-prompts-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.saved-prompts-search input:focus {
+  border-color: var(--accent-color);
+}
+
+.saved-prompts-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px;
+}
+
+.saved-prompts-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.saved-prompt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.saved-prompt-item:hover {
+  background: var(--bg-hover);
+}
+
+.saved-prompt-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.saved-prompt-item-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.saved-prompt-template-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: rgba(99, 102, 241, 0.1);
+  border-radius: 4px;
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+
+.saved-prompt-item-preview {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.saved-prompt-item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.saved-prompt-item:hover .saved-prompt-item-actions {
+  opacity: 1;
+}
+
+.saved-prompt-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.saved-prompt-action-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.saved-prompt-action-btn.delete:hover {
+  color: #ef4444;
+}
+
+/* 編集モード */
+.saved-prompt-edit {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.saved-prompt-edit-field {
+  margin-bottom: 8px;
+}
+
+.saved-prompt-edit-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.saved-prompt-edit-field input,
+.saved-prompt-edit-field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.saved-prompt-edit-field input:focus,
+.saved-prompt-edit-field textarea:focus {
+  border-color: var(--accent-color);
+}
+
+.saved-prompt-edit-field textarea {
+  resize: vertical;
+  min-height: 80px;
+  max-height: 200px;
+  line-height: 1.5;
+}
+
+.saved-prompt-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.saved-prompt-edit-cancel,
+.saved-prompt-edit-save {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.saved-prompt-edit-cancel {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.saved-prompt-edit-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.saved-prompt-edit-save {
+  background: var(--accent-color);
+  color: white;
+}
+
+.saved-prompt-edit-save:hover {
+  background: var(--accent-hover);
+}
+
+.saved-prompt-edit-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 入力中テキスト保存ボタン */
+.save-current-input-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border-color);
+  color: var(--accent-color);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.save-current-input-btn:hover {
+  background: var(--bg-hover);
+}

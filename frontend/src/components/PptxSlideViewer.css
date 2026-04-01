@@ -1,0 +1,217 @@
+.pptx-viewer {
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 8px 0;
+  background: var(--bg-secondary, #f5f5f5);
+}
+
+.pptx-viewer--loading,
+.pptx-viewer--error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--text-secondary, #666);
+  font-size: 14px;
+}
+
+.pptx-viewer__spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border-color, #e0e0e0);
+  border-top-color: var(--accent-color, #4a9eff);
+  border-radius: 50%;
+  animation: pptx-spin 0.8s linear infinite;
+}
+
+@keyframes pptx-spin {
+  to { transform: rotate(360deg); }
+}
+
+.pptx-viewer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  background: var(--bg-primary, #fff);
+}
+
+.pptx-viewer__filename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #333);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pptx-viewer__filename svg {
+  flex-shrink: 0;
+  color: #d04423;
+}
+
+.pptx-viewer__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pptx-viewer__download-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.pptx-viewer__download-btn:hover {
+  background: var(--bg-hover, #e8e8e8);
+  color: var(--text-primary, #333);
+}
+
+.pptx-viewer__export-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--accent-color, #4a9eff);
+  border-radius: 4px;
+  background: var(--accent-color, #4a9eff);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.pptx-viewer__export-btn:hover {
+  opacity: 0.85;
+}
+
+.pptx-viewer__export-btn--controls {
+  margin-left: auto;
+}
+
+.pptx-viewer__slide-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px;
+  background: var(--bg-secondary, #f5f5f5);
+  overflow: hidden;
+  min-height: 0;
+  position: relative;
+}
+
+.pptx-viewer__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-secondary, #666);
+  font-size: 14px;
+  background: var(--bg-secondary, #f5f5f5);
+  z-index: 10;
+}
+
+.pptx-viewer__slide {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pptx-viewer__slide--interactive {
+  position: relative;
+  user-select: none;
+}
+
+/* Force SVG to fit within the container regardless of its intrinsic size */
+.pptx-viewer__slide svg {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+  max-height: 100%;
+}
+
+/* Selection overlay */
+.pptx-viewer__slide .selection-overlay {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid #4a90d9;
+  z-index: 100;
+}
+
+.pptx-viewer__slide .resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #4a90d9;
+  border: 1px solid #fff;
+  border-radius: 2px;
+  pointer-events: all;
+  z-index: 101;
+}
+
+.pptx-viewer__slide .resize-handle.nw { top: -5px; left: -5px; cursor: nw-resize; }
+.pptx-viewer__slide .resize-handle.ne { top: -5px; right: -5px; cursor: ne-resize; }
+.pptx-viewer__slide .resize-handle.sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+.pptx-viewer__slide .resize-handle.se { bottom: -5px; right: -5px; cursor: se-resize; }
+.pptx-viewer__slide .resize-handle.n  { top: -5px; left: calc(50% - 5px); cursor: n-resize; }
+.pptx-viewer__slide .resize-handle.s  { bottom: -5px; left: calc(50% - 5px); cursor: s-resize; }
+.pptx-viewer__slide .resize-handle.w  { top: calc(50% - 5px); left: -5px; cursor: w-resize; }
+.pptx-viewer__slide .resize-handle.e  { top: calc(50% - 5px); right: -5px; cursor: e-resize; }
+
+.pptx-viewer__controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px;
+  border-top: 1px solid var(--border-color, #e0e0e0);
+  background: var(--bg-primary, #fff);
+  flex-shrink: 0;
+}
+
+.pptx-viewer__nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary, #333);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.pptx-viewer__nav-btn:hover:not(:disabled) {
+  background: var(--bg-hover, #e8e8e8);
+}
+
+.pptx-viewer__nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.pptx-viewer__page-info {
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+  min-width: 60px;
+  text-align: center;
+}

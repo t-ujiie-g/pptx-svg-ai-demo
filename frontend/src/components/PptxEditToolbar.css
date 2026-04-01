@@ -1,0 +1,115 @@
+/* Fill toolbar */
+.pptx-edit-fill {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-secondary, #f5f5f5);
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.pptx-edit-fill__label {
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--text-primary, #333);
+}
+
+.pptx-edit-fill__picker {
+  width: 32px;
+  height: 24px;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 4px;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+}
+
+.pptx-edit-fill__apply,
+.pptx-edit-text__apply {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 4px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #333);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pptx-edit-fill__apply:hover,
+.pptx-edit-text__apply:hover {
+  background: var(--bg-hover, #e8e8e8);
+}
+
+.pptx-edit-fill__divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-color, #ccc);
+  margin: 0 2px;
+}
+
+.pptx-edit-fill__shape-label {
+  color: var(--text-secondary, #666);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Text runs panel */
+.pptx-edit-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-secondary, #f5f5f5);
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  max-height: 160px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.pptx-edit-text__title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-primary, #333);
+}
+
+.pptx-edit-text__runs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pptx-edit-text__row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pptx-edit-text__index {
+  color: var(--text-secondary, #999);
+  font-size: 11px;
+  font-family: monospace;
+  min-width: 44px;
+  white-space: nowrap;
+}
+
+.pptx-edit-text__input {
+  flex: 1;
+  padding: 3px 6px;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 4px;
+  font-size: 12px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #333);
+  min-width: 0;
+}
+
+.pptx-edit-text__input:focus {
+  outline: none;
+  border-color: var(--accent-color, #4a9eff);
+}
