@@ -2,9 +2,7 @@
 
 import json
 import logging
-import uuid
 from collections.abc import AsyncGenerator
-from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -13,50 +11,78 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from starlette.datastructures import UploadFile
 
-from src.agents.pptx_agent import PPTX_ARTIFACT_MARKER, clear_pptx_thread_id, set_pptx_thread_id
+from src.agents.pptx_agent import (
+    PPTX_ARTIFACT_MARKER,
+    clear_edit_session,
+    clear_pptx_thread_id,
+    set_edit_session,
+    set_pptx_thread_id,
+)
 from src.agents.root_agent import get_root_agent
 from src.agents.tools.file_bridge import (
     get_request_files,
     set_request_files,
     store_attached_files,
 )
-from src.constants import APP_NAME, DEFAULT_USER_ID
+from src.constants import (
+    ALLOWED_UPLOAD_MIME_TYPES,
+    APP_NAME,
+    DEFAULT_THREAD_ID,
+    DEFAULT_USER_ID,
+    MAX_UPLOAD_SIZE,
+    PPTX_MIME_TYPE,
+)
+from src.services.artifact_store import get_artifact, store_artifact
+from src.services.pptx_edit_bridge import bridge
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 
-# Create a session service (in production, use a persistent store)
+# In-memory session service. Acceptable for this demo; swap for a persistent
+# store if multi-process deployment is introduced.
 session_service = InMemorySessionService()
 
-# Gemini inline request limits
-ALLOWED_MIME_TYPES = {
-    # 画像
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/heic",
-    "image/heif",
-    # PDF
-    "application/pdf",
-    # PowerPoint
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    # テキスト
-    "text/plain",
-    "text/html",
-    "text/csv",
-    # 音声
-    "audio/wav",
-    "audio/mp3",
-    "audio/mpeg",
-    "audio/ogg",
-    "audio/webm",
-    # 動画
-    "video/mp4",
-    "video/webm",
-    "video/mpeg",
-}
-MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+
+async def _extract_pptx_context_via_bridge(
+    pptx_bytes: bytes, session_id: str, artifact_id: str,
+) -> str:
+    """Load PPTX into bridge and return structured shape info as text context."""
+    try:
+        await bridge.load_pptx(session_id, pptx_bytes)
+        info = await bridge.get_all_slides_info(session_id)
+        set_edit_session(session_id)
+
+        lines = [
+            f"【編集中PPTX — artifact_id: {artifact_id}】",
+            f"スライド数: {info.get('slide_count', 0)}",
+            "",
+        ]
+        for slide in info.get("slides", []):
+            si = slide.get("slide_idx", 0)
+            lines.append(f"--- スライド {si} ---")
+            for shape in slide.get("shapes", []):
+                idx = shape.get("idx", "?")
+                stype = shape.get("shape_type", "?")
+                x, y = shape.get("x", 0), shape.get("y", 0)
+                cx, cy = shape.get("cx", 0), shape.get("cy", 0)
+                fill = shape.get("fill_hex", "")
+                parts_desc = f"  shape[{idx}] type={stype} pos=({x},{y}) size=({cx},{cy})"
+                if fill:
+                    parts_desc += f" fill=#{fill}"
+                lines.append(parts_desc)
+                for tr in shape.get("text_runs", []):
+                    lines.append(f"    text[p{tr['pi']},r{tr['ri']}]: {tr['text']!r}")
+            lines.append("")
+
+        lines.append(
+            "※ 上記PPTXを編集するには load_pptx → edit_shape_* → save_edited_pptx を使用してください。"
+            f" artifact_id=\"{artifact_id}\""
+        )
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Bridge PPTX context extraction failed: {e}")
+        return f"【添付PPTX（解析失敗）】artifact_id={artifact_id}\nエラー: {e}"
 
 
 async def _parse_request(
@@ -77,12 +103,22 @@ async def _parse_request(
 
         # テキストフィールド取得
         text = str(form.get("text", ""))
-        thread_id = str(form.get("threadId", "default"))
+        thread_id = str(form.get("threadId", DEFAULT_THREAD_ID))
         user_id = str(form.get("userId", DEFAULT_USER_ID))
+        pptx_artifact_id = str(form.get("pptxArtifactId", ""))
 
         parts: list[types.Part] = []
         if text.strip():
             parts.append(types.Part(text=text))
+
+        # pptx_artifact_id が指定されている場合、既存アーティファクトからブリッジ経由でコンテキスト生成
+        if pptx_artifact_id:
+            artifact = get_artifact(pptx_artifact_id)
+            if artifact:
+                ctx = await _extract_pptx_context_via_bridge(
+                    artifact.data, threadId_to_session(thread_id), pptx_artifact_id,
+                )
+                parts.append(types.Part(text=ctx))
 
         # ファイル取得
         raw_files: list[dict] = []
@@ -90,17 +126,30 @@ async def _parse_request(
             value = form[key]
             if isinstance(value, UploadFile):
                 mime_type = value.content_type or ""
-                if mime_type not in ALLOWED_MIME_TYPES:
+                if mime_type not in ALLOWED_UPLOAD_MIME_TYPES:
                     raise ValueError(f"サポートされていないファイル形式です: {mime_type}")
 
                 file_bytes = await value.read()
-                if len(file_bytes) > MAX_FILE_SIZE:
+                if len(file_bytes) > MAX_UPLOAD_SIZE:
+                    limit_mb = MAX_UPLOAD_SIZE // (1024 * 1024)
                     raise ValueError(
-                        f"ファイルサイズが上限(20MB)を超えています: {value.filename}"
+                        f"ファイルサイズが上限({limit_mb}MB)を超えています: {value.filename}"
                     )
 
-                # LLMコンテキスト用
-                parts.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
+                if mime_type == PPTX_MIME_TYPE:
+                    # PPTX: アーティファクトに保存してブリッジ経由でコンテキスト生成
+                    aid = store_artifact(
+                        thread_id=thread_id,
+                        filename=value.filename or "presentation.pptx",
+                        data=file_bytes,
+                    )
+                    ctx = await _extract_pptx_context_via_bridge(
+                        file_bytes, threadId_to_session(thread_id), aid,
+                    )
+                    parts.append(types.Part(text=ctx))
+                else:
+                    # 画像/PDF等はGeminiインラインパーツとして渡す
+                    parts.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
 
                 # ファイルブリッジ用
                 raw_files.append({
@@ -125,10 +174,15 @@ async def _parse_request(
     if not last_message:
         raise ValueError("No user message found")
 
-    thread_id = body.get("threadId", "default")
+    thread_id = body.get("threadId", DEFAULT_THREAD_ID)
     user_id = body.get("userId", DEFAULT_USER_ID)
     parts = [types.Part(text=last_message)]
     return parts, thread_id, user_id, {}
+
+
+def threadId_to_session(thread_id: str) -> str:
+    """Convert thread_id to bridge session_id."""
+    return f"edit-{thread_id}"
 
 
 def _setup_request_stores(
@@ -143,9 +197,11 @@ def _setup_request_stores(
     set_pptx_thread_id(thread_id)
 
 
-def _cleanup_request_stores() -> None:
+async def _cleanup_request_stores(thread_id: str = "") -> None:
     """リクエストストアをクリーンアップする。"""
     clear_pptx_thread_id()
+    clear_edit_session()
+    # ブリッジセッションのアンロードはしない（同一スレッドで再利用可能にするため）
 
 
 async def _get_or_create_session(user_id: str, thread_id: str):
@@ -178,61 +234,6 @@ def _extract_last_user_message(messages: list[dict]) -> str:
                     elif isinstance(part, str):
                         return part
     return ""
-
-
-@router.post("/chat")
-async def chat_endpoint(request: Request) -> dict[str, Any]:
-    """Chat completion endpoint for the frontend."""
-    try:
-        parts, thread_id, user_id, attached_files = await _parse_request(request)
-    except (ValueError, Exception) as e:
-        logger.error(f"Failed to parse request: {e}")
-        return {"error": str(e)}
-
-    root_agent = await get_root_agent(thread_id=thread_id)
-
-    runner = Runner(
-        agent=root_agent,
-        app_name=APP_NAME,
-        session_service=session_service,
-    )
-
-    await _get_or_create_session(user_id, thread_id)
-    _setup_request_stores(thread_id, attached_files)
-
-    content = types.Content(role="user", parts=parts)
-
-    response_text = ""
-    try:
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=thread_id,
-            new_message=content,
-        ):
-            if hasattr(event, "content") and event.content:
-                for part in event.content.parts:
-                    if hasattr(part, "text") and part.text:
-                        response_text += part.text
-    except Exception as e:
-        logger.error(f"Error running agent: {e}")
-        response_text = f"エラーが発生しました: {str(e)}"
-    finally:
-        _cleanup_request_stores()
-
-    return {
-        "id": thread_id,
-        "object": "chat.completion",
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": response_text,
-                },
-                "finish_reason": "stop",
-            }
-        ],
-    }
 
 
 async def _stream_agent_events(
@@ -324,7 +325,7 @@ async def _stream_agent_events(
         error_data = {"type": "error", "message": str(e)}
         yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
     finally:
-        _cleanup_request_stores()
+        await _cleanup_request_stores(thread_id)
 
 
 @router.post("/chat/stream")

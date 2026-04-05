@@ -38,10 +38,10 @@ const INITIAL_STREAMING_STATE: StreamingState = {
 }
 
 function getUserId(): string {
-  let userId = localStorage.getItem('user-id')
+  let userId = localStorage.getItem(config.storage.userId)
   if (!userId) {
     userId = crypto.randomUUID()
-    localStorage.setItem('user-id', userId)
+    localStorage.setItem(config.storage.userId, userId)
   }
   return userId
 }
@@ -161,7 +161,8 @@ export function useChat({
     attachedFiles: File[],
     session: ChatSession,
     onNewChat: () => void,
-    createAttachmentMeta: (files: File[]) => Promise<FileAttachment[]>
+    createAttachmentMeta: (files: File[]) => Promise<FileAttachment[]>,
+    pptxArtifactId?: string,
   ) => {
     if ((!input.trim() && attachedFiles.length === 0) || isLoading) return
     if (!session) { onNewChat(); return }
@@ -186,11 +187,15 @@ export function useChat({
     try {
       let response: Response
 
-      if (attachedFiles.length > 0) {
+      // Use multipart when there are files OR a pptxArtifactId to pass
+      if (attachedFiles.length > 0 || pptxArtifactId) {
         const formData = new FormData()
         formData.append('text', input)
         formData.append('threadId', session.id)
         formData.append('userId', getUserId())
+        if (pptxArtifactId) {
+          formData.append('pptxArtifactId', pptxArtifactId)
+        }
         for (const file of attachedFiles) formData.append('files', file)
         response = await fetch(`${config.api.baseUrl}${config.api.endpoints.chatStream}`, {
           method: 'POST', body: formData, signal: abortControllerRef.current.signal,

@@ -4,7 +4,9 @@
  * localStorageを使用して保存プロンプトを永続化します。
  */
 
-const STORAGE_KEY = 'saved-prompts'
+import { config } from '../config'
+
+const STORAGE_KEY = config.storage.savedPrompts
 
 export interface TemplateVariable {
   name: string

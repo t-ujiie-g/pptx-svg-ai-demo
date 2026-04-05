@@ -26,6 +26,13 @@ export interface ShapeInfo {
 const HANDLE_POSITIONS = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'] as const
 export type HandlePos = (typeof HANDLE_POSITIONS)[number]
 
+/** Default EMU-per-CSS-pixel ratio (96 DPI). Used when SVG is not yet mounted. */
+export const EMU_PER_CSS_PX_DEFAULT = 9525
+/** Default PPTX slide width in EMU (10 inches, 16:9 widescreen). */
+export const DEFAULT_SLIDE_WIDTH_EMU = 9144000
+/** Minimum shape size in EMU for drag/resize (prevents zero-size shapes). */
+export const MIN_SHAPE_EMU = 50000
+
 // ── SVG insertion ──
 
 export function insertSvgInto(container: HTMLElement, svgString: string) {
@@ -82,9 +89,12 @@ export function showOverlay(container: HTMLElement, shapeG: SVGGElement) {
 // ── EMU-per-CSS-pixel ──
 
 export function getEmuPerCssPx(svgEl: SVGSVGElement | null): number {
-  if (!svgEl) return 9525
+  if (!svgEl) return EMU_PER_CSS_PX_DEFAULT
   const rect = svgEl.getBoundingClientRect()
-  const slideCx = parseInt(svgEl.getAttribute('data-ooxml-slide-cx') || '9144000', 10)
+  const slideCx = parseInt(
+    svgEl.getAttribute('data-ooxml-slide-cx') || String(DEFAULT_SLIDE_WIDTH_EMU),
+    10,
+  )
   return slideCx / rect.width
 }
 

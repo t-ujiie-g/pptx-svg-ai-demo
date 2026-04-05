@@ -11,22 +11,16 @@ import uuid
 
 from google.adk.tools import ToolContext
 
+from src.constants import FILE_ID_LENGTH, MAX_READ_FILE_SIZE, TEXT_MIME_TYPES
+
 logger = logging.getLogger(__name__)
 
 # モジュールレベルのファイルストア: {session_id: {file_id: file_meta}}
 _file_store: dict[str, dict[str, dict]] = {}
 
-# テキスト系MIMEタイプ（UTF-8デコードで返す）
-_TEXT_MIME_TYPES = {
-    "text/plain",
-    "text/html",
-    "text/csv",
-    "application/json",
-    "application/xml",
-}
 
-# read_attached_file_content の最大サイズ (1MB)
-_MAX_READ_SIZE = 1 * 1024 * 1024
+def _new_file_id() -> str:
+    return str(uuid.uuid4())[:FILE_ID_LENGTH]
 
 
 def store_attached_files(files: list[dict]) -> dict[str, dict]:
@@ -43,7 +37,7 @@ def store_attached_files(files: list[dict]) -> dict[str, dict]:
     """
     result: dict[str, dict] = {}
     for f in files:
-        file_id = str(uuid.uuid4())[:8]
+        file_id = _new_file_id()
         data_bytes: bytes = f["data_bytes"]
         result[file_id] = {
             "file_name": f["file_name"],
@@ -74,7 +68,7 @@ def store_generated_file(
     Returns:
         新規発行された file_id。
     """
-    file_id = str(uuid.uuid4())[:8]
+    file_id = _new_file_id()
     meta = {
         "file_name": file_name,
         "mime_type": mime_type,
@@ -147,16 +141,17 @@ def read_attached_file_content(tool_context: ToolContext, file_id: str) -> dict:
     if not file_meta:
         return {"error": f"ファイルが見つかりません: {file_id}"}
 
-    if file_meta["size_bytes"] > _MAX_READ_SIZE:
+    if file_meta["size_bytes"] > MAX_READ_FILE_SIZE:
+        limit_mb = MAX_READ_FILE_SIZE // (1024 * 1024)
         return {
-            "error": f"ファイルサイズが上限(1MB)を超えています: "
+            "error": f"ファイルサイズが上限({limit_mb}MB)を超えています: "
             f"{file_meta['file_name']} ({file_meta['size_bytes']} bytes)"
         }
 
     data_base64: str = file_meta["data_base64"]
     mime_type: str = file_meta["mime_type"]
 
-    if mime_type in _TEXT_MIME_TYPES:
+    if mime_type in TEXT_MIME_TYPES:
         try:
             text_content = base64.b64decode(data_base64).decode("utf-8")
             return {

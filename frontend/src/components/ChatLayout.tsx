@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Sidebar } from './Sidebar'
 import { ChatView } from './ChatView'
 import { PptxPanel } from './PptxPanel'
 import { chatHistoryService, ChatSession, PptxArtifactData } from '../services/chatHistory'
 import { useTheme } from '../hooks/useTheme'
+import type { PptxSlideViewerHandle } from './PptxSlideViewer'
 import './ChatLayout.css'
 
 export function ChatLayout() {
@@ -14,6 +15,8 @@ export function ChatLayout() {
   const [pptxMaximized, setPptxMaximized] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const { theme, setTheme } = useTheme()
+
+  const pptxViewerRef = useRef<PptxSlideViewerHandle>(null)
 
   useEffect(() => {
     const init = async () => {
@@ -67,6 +70,14 @@ export function ChatLayout() {
     setPptxMaximized(false)
   }
 
+  // Get edited PPTX file to attach to chat message
+  const getEditedPptxFile = useCallback(async (): Promise<File | null> => {
+    if (pptxViewerRef.current) {
+      return pptxViewerRef.current.exportIfModified()
+    }
+    return null
+  }, [])
+
   if (isLoading) {
     return (
       <div className="chat-layout loading">
@@ -110,10 +121,13 @@ export function ChatLayout() {
               onUpdateSession={handleUpdateSession}
               onNewChat={handleNewChat}
               onPptxArtifactChange={setActivePptxArtifact}
+              getEditedPptxFile={getEditedPptxFile}
+              activePptxArtifactId={activePptxArtifact?.artifactId}
             />
           </div>
           {showPptx && (
             <PptxPanel
+              ref={pptxViewerRef}
               artifact={activePptxArtifact!}
               maximized={pptxMaximized}
               onToggleMaximize={() => setPptxMaximized((v) => !v)}

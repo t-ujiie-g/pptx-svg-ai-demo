@@ -7,7 +7,6 @@ export const config = {
   api: {
     baseUrl: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
     endpoints: {
-      chat: '/chat',
       chatStream: '/chat/stream',
       health: '/health',
       generateTemplate: '/prompts/generate-template',
@@ -24,6 +23,8 @@ export const config = {
   storage: {
     theme: 'theme',
     userId: 'user-id',
+    chatHistory: 'chat-history',
+    savedPrompts: 'saved-prompts',
   },
 
   // UI設定

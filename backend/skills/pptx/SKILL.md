@@ -8,35 +8,55 @@ license: Proprietary. LICENSE.txt has complete terms
 
 ## Quick Reference
 
-| Task | Guide |
-|------|-------|
-| Read/analyze content | `python -m markitdown presentation.pptx` |
-| Edit or create from template | Read [editing.md](editing.md) |
-| Create from scratch | Read [pptxgenjs.md](pptxgenjs.md) |
+| Task | Method |
+|------|--------|
+| Read/analyze content | `load_pptx` → `get_slide_shapes` |
+| Edit existing PPTX | Read [editing.md](editing.md) — pptx-svg ブリッジ使用 |
+| Create from scratch | Read [pptxgenjs.md](pptxgenjs.md) — PptxGenJS 使用 |
+| Visual QA | `render_slide_svg` でSVGプレビュー |
+
+---
+
+## 重要: 編集 vs 新規作成の判断
+
+### 既存PPTXの編集（artifact_id がある場合）
+
+ユーザーのメッセージに `artifact_id` が含まれている場合、**必ず編集ツールを使用**:
+
+1. `load_pptx(artifact_id)` でロード
+2. `get_slide_shapes(slide_idx)` で構造確認
+3. `edit_shape_text` / `edit_shape_fill` / `edit_shape_transform` で変更
+4. `render_slide_svg(slide_idx)` で視覚的確認
+5. `save_edited_pptx(filename)` で保存
+
+**⚠️ artifact_id がある場合に PptxGenJS で新規作成してはいけません。** ユーザーの編集内容が失われます。
+
+### 新規作成（artifact_id がない場合）
+
+テンプレートや既存ファイルがない場合のみ PptxGenJS を使用。
 
 ---
 
 ## Reading Content
 
-```bash
-# Text extraction
-python -m markitdown presentation.pptx
-
-# Visual overview
-python scripts/thumbnail.py presentation.pptx
-
-# Raw XML
-python scripts/office/unpack.py presentation.pptx unpacked/
+```
+load_pptx(artifact_id) → 全スライドのシェイプ情報を取得
+get_slide_shapes(slide_idx) → 特定スライドの詳細情報
+render_slide_svg(slide_idx) → SVGで視覚的に確認
 ```
 
 ---
 
-## Editing Workflow
+## Editing Workflow (pptx-svg)
 
 **Read [editing.md](editing.md) for full details.**
 
-1. Analyze template with `thumbnail.py`
-2. Unpack → manipulate slides → edit content → clean → pack
+pptx-svg ブリッジによるシェイプ単位の編集:
+- テキスト変更: `edit_shape_text`
+- 色変更: `edit_shape_fill`
+- 位置/サイズ変更: `edit_shape_transform`
+
+LibreOffice や unpack/pack は不要です。
 
 ---
 
@@ -142,91 +162,44 @@ Choose colors that match your topic — don't default to generic blue. Use these
 
 **Assume there are problems. Your job is to find them.**
 
-Your first render is almost never correct. Approach QA as a bug hunt, not a confirmation step. If you found zero issues on first inspection, you weren't looking hard enough.
-
 ### Content QA
 
-```bash
-python -m markitdown output.pptx
+```
+load_pptx(artifact_id) で全スライド情報を確認
 ```
 
 Check for missing content, typos, wrong order.
 
-**When using templates, check for leftover placeholder text:**
-
-```bash
-python -m markitdown output.pptx | grep -iE "xxxx|lorem|ipsum|this.*(page|slide).*layout"
-```
-
-If grep returns results, fix them before declaring success.
-
 ### Visual QA
 
-**⚠️ USE SUBAGENTS** — even for 2-3 slides. You've been staring at the code and will see what you expect, not what's there. Subagents have fresh eyes.
-
-Convert slides to images (see [Converting to Images](#converting-to-images)), then use this prompt:
+編集後は `render_slide_svg` でスライドを確認:
 
 ```
-Visually inspect these slides. Assume there are issues — find them.
+render_slide_svg(slide_idx=0)
+render_slide_svg(slide_idx=1)
+...
+```
 
 Look for:
-- Overlapping elements (text through shapes, lines through words, stacked elements)
-- Text overflow or cut off at edges/box boundaries
-- Decorative lines positioned for single-line text but title wrapped to two lines
-- Source citations or footers colliding with content above
-- Elements too close (< 0.3" gaps) or cards/sections nearly touching
-- Uneven gaps (large empty area in one place, cramped in another)
-- Insufficient margin from slide edges (< 0.5")
-- Columns or similar elements not aligned consistently
-- Low-contrast text (e.g., light gray text on cream-colored background)
-- Low-contrast icons (e.g., dark icons on dark backgrounds without a contrasting circle)
-- Text boxes too narrow causing excessive wrapping
+- Overlapping elements (text through shapes)
+- Text overflow or cut off at edges
+- Elements too close or unevenly spaced
+- Low-contrast text or icons
 - Leftover placeholder content
-
-For each slide, list issues or areas of concern, even if minor.
-
-Read and analyze these images:
-1. /path/to/slide-01.jpg (Expected: [brief description])
-2. /path/to/slide-02.jpg (Expected: [brief description])
-
-Report ALL issues found, including minor ones.
-```
 
 ### Verification Loop
 
-1. Generate slides → Convert to images → Inspect
+1. Edit → Render SVG → Inspect
 2. **List issues found** (if none found, look again more critically)
-3. Fix issues
-4. **Re-verify affected slides** — one fix often creates another problem
+3. Fix issues with edit_shape_* tools
+4. **Re-verify affected slides**
 5. Repeat until a full pass reveals no new issues
-
-**Do not declare success until you've completed at least one fix-and-verify cycle.**
-
----
-
-## Converting to Images
-
-Convert presentations to individual slide images for visual inspection:
-
-```bash
-python scripts/office/soffice.py --headless --convert-to pdf output.pptx
-pdftoppm -jpeg -r 150 output.pdf slide
-```
-
-This creates `slide-01.jpg`, `slide-02.jpg`, etc.
-
-To re-render specific slides after fixes:
-
-```bash
-pdftoppm -jpeg -r 150 -f N -l N output.pdf slide-fixed
-```
 
 ---
 
 ## Dependencies
 
-- `pip install "markitdown[pptx]"` - text extraction
-- `pip install Pillow` - thumbnail grids
-- `npm install -g pptxgenjs` - creating from scratch
-- LibreOffice (`soffice`) - PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`)
-- Poppler (`pdftoppm`) - PDF to images
+- `pptx-svg` (npm, グローバルインストール済み) — PPTX読み込み・編集・SVGレンダリング
+- `jsdom` (npm, グローバルインストール済み) — SVG解析
+- `pptxgenjs` (npm, グローバルインストール済み) — 新規作成用
+- `react`, `react-dom`, `react-icons`, `sharp` (npm) — アイコン生成用

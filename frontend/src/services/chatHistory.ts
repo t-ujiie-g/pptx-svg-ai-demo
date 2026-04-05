@@ -51,7 +51,7 @@ export interface ChatSession {
   updatedAt: number
 }
 
-const STORAGE_KEY = 'chat-history'
+const STORAGE_KEY = config.storage.chatHistory
 
 function loadSessions(): ChatSession[] {
   try {

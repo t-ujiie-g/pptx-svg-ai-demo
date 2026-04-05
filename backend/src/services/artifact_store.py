@@ -3,12 +3,11 @@
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
+
+from src.constants import ARTIFACT_TTL, PPTX_MIME_TYPE
 
 logger = logging.getLogger(__name__)
-
-# Artifacts expire after 1 hour
-_ARTIFACT_TTL = timedelta(hours=1)
 
 
 @dataclass
@@ -31,7 +30,7 @@ def store_artifact(
     thread_id: str,
     filename: str,
     data: bytes,
-    mime_type: str = "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    mime_type: str = PPTX_MIME_TYPE,
 ) -> str:
     """Store a file artifact and return its ID."""
     _cleanup_expired()
@@ -53,11 +52,27 @@ def get_artifact(artifact_id: str) -> Artifact | None:
     return _artifacts.get(artifact_id)
 
 
+def update_artifact(artifact_id: str, data: bytes, filename: str | None = None) -> bool:
+    """Update an existing artifact's data (and optionally filename).
+
+    Returns True if the artifact was found and updated, False otherwise.
+    """
+    artifact = _artifacts.get(artifact_id)
+    if artifact is None:
+        return False
+    artifact.data = data
+    if filename:
+        artifact.filename = filename
+    artifact.created_at = datetime.now()  # refresh TTL
+    logger.info(f"Updated artifact {artifact_id}: {artifact.filename} ({len(data)} bytes)")
+    return True
+
+
 def _cleanup_expired() -> None:
     """Remove expired artifacts."""
     now = datetime.now()
     expired = [
-        aid for aid, a in _artifacts.items() if now - a.created_at > _ARTIFACT_TTL
+        aid for aid, a in _artifacts.items() if now - a.created_at > ARTIFACT_TTL
     ]
     for aid in expired:
         del _artifacts[aid]

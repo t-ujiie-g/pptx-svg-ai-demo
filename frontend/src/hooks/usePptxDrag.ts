@@ -5,9 +5,8 @@
 
 import { useEffect, useRef } from 'react'
 import { findShapeElement, getShapeTransform } from 'pptx-svg'
-import { getEmuPerCssPx, type HandlePos } from '../utils/pptxSvg'
+import { getEmuPerCssPx, MIN_SHAPE_EMU, type HandlePos } from '../utils/pptxSvg'
 
-const MIN_SHAPE_EMU = 50000
 const MIN_OVERLAY_PX = 10
 
 interface DragBase {

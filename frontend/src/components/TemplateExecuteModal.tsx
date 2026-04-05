@@ -1,19 +1,13 @@
 import { useState, useMemo, useCallback } from 'react'
 import { SavedPrompt, TemplateVariable } from '../services/savedPrompts'
 import { extractVariableNames, resolveTemplate } from '../services/templateUtils'
+import { formatFileSize } from '../hooks/useFileAttachment'
 import './TemplateExecuteModal.css'
 
 interface TemplateExecuteModalProps {
   template: SavedPrompt
   onExecute: (resolvedContent: string, files?: File[]) => void
   onClose: () => void
-}
-
-/** ファイルサイズを人間が読める形式にフォーマット */
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function TemplateExecuteModal({

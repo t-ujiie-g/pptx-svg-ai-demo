@@ -1,205 +1,176 @@
-# Editing Presentations
+# Editing Presentations (pptx-svg)
 
-## Template-Based Workflow
+## Overview
 
-When using an existing presentation as a template:
+既存PPTXの編集には **pptx-svg ブリッジ** を使用します。
+これはNode.jsベースのPPTX編集エンジンで、シェイプ単位のテキスト・色・位置の変更とPPTXエクスポートが可能です。
 
-1. **Analyze existing slides**:
-   ```bash
-   python scripts/thumbnail.py template.pptx
-   python -m markitdown template.pptx
-   ```
-   Review `thumbnails.jpg` to see layouts, and markitdown output to see placeholder text.
-
-2. **Plan slide mapping**: For each content section, choose a template slide.
-
-   ⚠️ **USE VARIED LAYOUTS** — monotonous presentations are a common failure mode. Don't default to basic title + bullet slides. Actively seek out:
-   - Multi-column layouts (2-column, 3-column)
-   - Image + text combinations
-   - Full-bleed images with text overlay
-   - Quote or callout slides
-   - Section dividers
-   - Stat/number callouts
-   - Icon grids or icon + text rows
-
-   **Avoid:** Repeating the same text-heavy layout for every slide.
-
-   Match content type to layout style (e.g., key points → bullet slide, team info → multi-column, testimonials → quote slide).
-
-3. **Unpack**: `python scripts/office/unpack.py template.pptx unpacked/`
-
-4. **Build presentation** (do this yourself, not with subagents):
-   - Delete unwanted slides (remove from `<p:sldIdLst>`)
-   - Duplicate slides you want to reuse (`add_slide.py`)
-   - Reorder slides in `<p:sldIdLst>`
-   - **Complete all structural changes before step 5**
-
-5. **Edit content**: Update text in each `slide{N}.xml`.
-   **Use subagents here if available** — slides are separate XML files, so subagents can edit in parallel.
-
-6. **Clean**: `python scripts/clean.py unpacked/`
-
-7. **Pack**: `python scripts/office/pack.py unpacked/ output.pptx --original template.pptx`
+LibreOffice や unpack/pack は **不要** です。
 
 ---
 
-## Scripts
+## 編集フロー
 
-| Script | Purpose |
-|--------|---------|
-| `unpack.py` | Extract and pretty-print PPTX |
-| `add_slide.py` | Duplicate slide or create from layout |
-| `clean.py` | Remove orphaned files |
-| `pack.py` | Repack with validation |
-| `thumbnail.py` | Create visual grid of slides |
+### 1. PPTXをロード
 
-### unpack.py
-
-```bash
-python scripts/office/unpack.py input.pptx unpacked/
+```
+load_pptx(artifact_id="<artifact-id>")
 ```
 
-Extracts PPTX, pretty-prints XML, escapes smart quotes.
+返り値にはスライドごとのシェイプ一覧が含まれます:
 
-### add_slide.py
-
-```bash
-python scripts/add_slide.py unpacked/ slide2.xml      # Duplicate slide
-python scripts/add_slide.py unpacked/ slideLayout2.xml # From layout
+```
+slides[0]:
+  shape[0] type=sp pos=(457200,274638) size=(8229600,1143000)
+    text[p0,r0]: "タイトルテキスト"
+  shape[1] type=sp pos=(457200,1600200) size=(8229600,4525963)
+    text[p0,r0]: "本文テキスト"
+    fill=#4472C4
 ```
 
-Prints `<p:sldId>` to add to `<p:sldIdLst>` at desired position.
+各シェイプの情報:
+- `idx`: シェイプインデックス（編集時に使用）
+- `shape_type`: `sp`(図形), `pic`(画像), `graphicFrame`(表/グラフ)等
+- `x, y, cx, cy`: 位置とサイズ（EMU単位。1インチ = 914400 EMU）
+- `rot`: 回転（60000分の1度単位）
+- `fill_hex`: 塗りつぶし色（6桁hex）
+- `text_runs`: テキスト内容 `[{pi, ri, text}]`
+  - `pi`: 段落インデックス
+  - `ri`: ラン（テキスト区間）インデックス
 
-### clean.py
+### 2. スライド情報の確認
 
-```bash
-python scripts/clean.py unpacked/
+特定スライドの詳細を取得:
+
+```
+get_slide_shapes(slide_idx=0)
 ```
 
-Removes slides not in `<p:sldIdLst>`, unreferenced media, orphaned rels.
+### 3. 編集操作
 
-### pack.py
+#### テキスト変更
 
-```bash
-python scripts/office/pack.py unpacked/ output.pptx --original input.pptx
+```
+edit_shape_text(
+    slide_idx=0,
+    shape_idx=2,
+    para_idx=0,
+    run_idx=0,
+    new_text="新しいタイトル"
+)
 ```
 
-Validates, repairs, condenses XML, re-encodes smart quotes.
+- `para_idx` / `run_idx` は `text_runs` の `pi` / `ri` に対応
+- 1つのシェイプ内で複数の段落・ランがある場合、それぞれ個別に変更
 
-### thumbnail.py
+#### 色変更
 
-```bash
-python scripts/thumbnail.py input.pptx [output_prefix] [--cols N]
+```
+edit_shape_fill(
+    slide_idx=0,
+    shape_idx=2,
+    r=68, g=114, b=196
+)
 ```
 
-Creates `thumbnails.jpg` with slide filenames as labels. Default 3 columns, max 12 per grid.
+- RGB値（0-255）で指定
 
-**Use for template analysis only** (choosing layouts). For visual QA, use `soffice` + `pdftoppm` to create full-resolution individual slide images—see SKILL.md.
+#### 位置・サイズ変更
+
+```
+edit_shape_transform(
+    slide_idx=0,
+    shape_idx=2,
+    x=457200,    # X位置 (EMU)
+    y=274638,    # Y位置 (EMU)
+    cx=8229600,  # 幅 (EMU)
+    cy=1143000,  # 高さ (EMU)
+    rot=0        # 回転 (60000分の1度)
+)
+```
+
+EMU換算表:
+| 単位 | EMU |
+|------|-----|
+| 1インチ | 914400 |
+| 1cm | 360000 |
+| 1pt | 12700 |
+
+スライドサイズ（標準 16:9）: 12192000 x 6858000 EMU
+
+### 4. 保存
+
+```
+save_edited_pptx(output_filename="updated_presentation.pptx")
+```
 
 ---
 
-## Slide Operations
+## 編集例
 
-Slide order is in `ppt/presentation.xml` → `<p:sldIdLst>`.
+### タイトルとサブタイトルの変更
 
-**Reorder**: Rearrange `<p:sldId>` elements.
+```
+load_pptx(artifact_id="abc-123")
 
-**Delete**: Remove `<p:sldId>`, then run `clean.py`.
+# タイトルを変更
+edit_shape_text(slide_idx=0, shape_idx=0, para_idx=0, run_idx=0,
+    new_text="2026年AI最新動向")
 
-**Add**: Use `add_slide.py`. Never manually copy slide files—the script handles notes references, Content_Types.xml, and relationship IDs that manual copying misses.
+# サブタイトルを変更
+edit_shape_text(slide_idx=0, shape_idx=1, para_idx=0, run_idx=0,
+    new_text="主要AIモデルの比較と展望")
+
+save_edited_pptx("AI_Trends_Updated.pptx")
+```
+
+### 複数スライドの色変更
+
+```
+load_pptx(artifact_id="abc-123")
+
+# スライド0〜3の背景シェイプの色を統一
+for slide_idx in [0, 1, 2, 3]:
+    edit_shape_fill(slide_idx=slide_idx, shape_idx=0, r=30, g=39, b=97)
+
+save_edited_pptx("recolored.pptx")
+```
+
+### レイアウト調整
+
+```
+load_pptx(artifact_id="abc-123")
+
+# シェイプを右に移動して幅を広げる
+edit_shape_transform(
+    slide_idx=1, shape_idx=3,
+    x=914400,     # 1インチ右
+    y=1828800,    # 2インチ下
+    cx=10363200,  # 幅を広げる
+    cy=4114800,   # 高さ
+)
+
+save_edited_pptx("adjusted.pptx")
+```
 
 ---
 
-## Editing Content
+## 視覚的QA
 
-**Subagents:** If available, use them here (after completing step 4). Each slide is a separate XML file, so subagents can edit in parallel. In your prompt to subagents, include:
-- The slide file path(s) to edit
-- **"Use the Edit tool for all changes"**
-- The formatting rules and common pitfalls below
+編集後のスライドを確認するには `render_slide_svg` ツールを使用:
 
-For each slide:
-1. Read the slide's XML
-2. Identify ALL placeholder content—text, images, charts, icons, captions
-3. Replace each placeholder with final content
+```
+render_slide_svg(slide_idx=0)
+```
 
-**Use the Edit tool, not sed or Python scripts.** The Edit tool forces specificity about what to replace and where, yielding better reliability.
-
-### Formatting Rules
-
-- **Bold all headers, subheadings, and inline labels**: Use `b="1"` on `<a:rPr>`. This includes:
-  - Slide titles
-  - Section headers within a slide
-  - Inline labels like (e.g.: "Status:", "Description:") at the start of a line
-- **Never use unicode bullets (•)**: Use proper list formatting with `<a:buChar>` or `<a:buAutoNum>`
-- **Bullet consistency**: Let bullets inherit from the layout. Only specify `<a:buChar>` or `<a:buNone>`.
+SVGが返されるので、レイアウトや内容を視覚的に検証できます。
 
 ---
 
-## Common Pitfalls
+## 注意事項
 
-### Template Adaptation
-
-When source content has fewer items than the template:
-- **Remove excess elements entirely** (images, shapes, text boxes), don't just clear text
-- Check for orphaned visuals after clearing text content
-- Run visual QA to catch mismatched counts
-
-When replacing text with different length content:
-- **Shorter replacements**: Usually safe
-- **Longer replacements**: May overflow or wrap unexpectedly
-- Test with visual QA after text changes
-- Consider truncating or splitting content to fit the template's design constraints
-
-**Template slots ≠ Source items**: If template has 4 team members but source has 3 users, delete the 4th member's entire group (image + text boxes), not just the text.
-
-### Multi-Item Content
-
-If source has multiple items (numbered lists, multiple sections), create separate `<a:p>` elements for each — **never concatenate into one string**.
-
-**❌ WRONG** — all items in one paragraph:
-```xml
-<a:p>
-  <a:r><a:rPr .../><a:t>Step 1: Do the first thing. Step 2: Do the second thing.</a:t></a:r>
-</a:p>
-```
-
-**✅ CORRECT** — separate paragraphs with bold headers:
-```xml
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" b="1" .../><a:t>Step 1</a:t></a:r>
-</a:p>
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" .../><a:t>Do the first thing.</a:t></a:r>
-</a:p>
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" b="1" .../><a:t>Step 2</a:t></a:r>
-</a:p>
-<!-- continue pattern -->
-```
-
-Copy `<a:pPr>` from the original paragraph to preserve line spacing. Use `b="1"` on headers.
-
-### Smart Quotes
-
-Handled automatically by unpack/pack. But the Edit tool converts smart quotes to ASCII.
-
-**When adding new text with quotes, use XML entities:**
-
-```xml
-<a:t>the &#x201C;Agreement&#x201D;</a:t>
-```
-
-| Character | Name | Unicode | XML Entity |
-|-----------|------|---------|------------|
-| `“` | Left double quote | U+201C | `&#x201C;` |
-| `”` | Right double quote | U+201D | `&#x201D;` |
-| `‘` | Left single quote | U+2018 | `&#x2018;` |
-| `’` | Right single quote | U+2019 | `&#x2019;` |
-
-### Other
-
-- **Whitespace**: Use `xml:space="preserve"` on `<a:t>` with leading/trailing spaces
-- **XML parsing**: Use `defusedxml.minidom`, not `xml.etree.ElementTree` (corrupts namespaces)
+- **既存PPTXの編集には必ず pptx-svg ブリッジを使用** してください
+- unpack/pack や LibreOffice は使用しません
+- PptxGenJS は **新規作成のみ** に使用します
+- 編集ツールはシェイプ単位の操作です。スライドの追加・削除・並べ替えには対応していません
+- テキスト変更は既存のラン（text run）の内容を置換します。新しい段落やランの追加はできません
