@@ -1,5 +1,6 @@
 """Chat API endpoint for the frontend."""
 
+import base64
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -11,13 +12,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from starlette.datastructures import UploadFile
 
-from src.agents.pptx_agent import (
-    PPTX_ARTIFACT_MARKER,
-    clear_edit_session,
-    clear_pptx_thread_id,
-    set_edit_session,
-    set_pptx_thread_id,
-)
+from src.agents.pptx_agent import clear_pptx_thread_id, set_pptx_thread_id
 from src.agents.root_agent import get_root_agent
 from src.agents.tools.file_bridge import (
     get_request_files,
@@ -27,13 +22,15 @@ from src.agents.tools.file_bridge import (
 from src.constants import (
     ALLOWED_UPLOAD_MIME_TYPES,
     APP_NAME,
+    DEFAULT_ARTIFACT_FILENAME,
     DEFAULT_THREAD_ID,
     DEFAULT_USER_ID,
     MAX_UPLOAD_SIZE,
+    PPTX_ARTIFACT_MARKER,
     PPTX_MIME_TYPE,
 )
 from src.services.artifact_store import get_artifact, store_artifact
-from src.services.pptx_edit_bridge import bridge
+from src.services.pptx_skill import inspect_pptx
 
 logger = logging.getLogger(__name__)
 
@@ -43,46 +40,89 @@ router = APIRouter(tags=["chat"])
 # store if multi-process deployment is introduced.
 session_service = InMemorySessionService()
 
+_MARKER_PREFIX = f"{PPTX_ARTIFACT_MARKER} "
 
-async def _extract_pptx_context_via_bridge(
-    pptx_bytes: bytes, session_id: str, artifact_id: str,
-) -> str:
-    """Load PPTX into bridge and return structured shape info as text context."""
+
+def _extract_pptx_artifact(response: object) -> dict | None:
+    """Find a `__PPTX_ARTIFACT__ {...}` line in a tool response's stdout.
+
+    Returns the parsed artifact info dict, or None if the tool response
+    doesn't carry one. Handles both direct dict responses and the nested
+    `{"stdout": "..."}` shape that run_skill_script returns.
+    """
+    if not isinstance(response, dict):
+        return None
+    stdout = response.get("stdout", "")
+    if not isinstance(stdout, str) or PPTX_ARTIFACT_MARKER not in stdout:
+        return None
+    for line in stdout.splitlines():
+        if line.startswith(_MARKER_PREFIX):
+            try:
+                return json.loads(line[len(_MARKER_PREFIX):])
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+async def _build_pptx_context_parts(
+    pptx_bytes: bytes, artifact_id: str,
+) -> list[types.Part]:
+    """Run pptx_inspect.js and return user-message Parts: text summary + PNG Parts.
+
+    Returns a list of parts that should be appended to the user message so
+    Gemini can see the current slide rendering plus structured shape info.
+    """
     try:
-        await bridge.load_pptx(session_id, pptx_bytes)
-        info = await bridge.get_all_slides_info(session_id)
-        set_edit_session(session_id)
-
-        lines = [
-            f"【編集中PPTX — artifact_id: {artifact_id}】",
-            f"スライド数: {info.get('slide_count', 0)}",
-            "",
-        ]
-        for slide in info.get("slides", []):
-            si = slide.get("slide_idx", 0)
-            lines.append(f"--- スライド {si} ---")
-            for shape in slide.get("shapes", []):
-                idx = shape.get("idx", "?")
-                stype = shape.get("shape_type", "?")
-                x, y = shape.get("x", 0), shape.get("y", 0)
-                cx, cy = shape.get("cx", 0), shape.get("cy", 0)
-                fill = shape.get("fill_hex", "")
-                parts_desc = f"  shape[{idx}] type={stype} pos=({x},{y}) size=({cx},{cy})"
-                if fill:
-                    parts_desc += f" fill=#{fill}"
-                lines.append(parts_desc)
-                for tr in shape.get("text_runs", []):
-                    lines.append(f"    text[p{tr['pi']},r{tr['ri']}]: {tr['text']!r}")
-            lines.append("")
-
-        lines.append(
-            "※ 上記PPTXを編集するには load_pptx → edit_shape_* → save_edited_pptx を使用してください。"
-            f" artifact_id=\"{artifact_id}\""
-        )
-        return "\n".join(lines)
+        info = await inspect_pptx(pptx_bytes, with_png=True)
     except Exception as e:
-        logger.error(f"Bridge PPTX context extraction failed: {e}")
-        return f"【添付PPTX（解析失敗）】artifact_id={artifact_id}\nエラー: {e}"
+        logger.error(f"PPTX inspect failed: {e}")
+        return [types.Part(
+            text=f"【添付PPTX（解析失敗）】artifact_id={artifact_id}\nエラー: {e}"
+        )]
+
+    lines = [
+        f"【編集中PPTX — artifact_id: {artifact_id}】",
+        f"スライド数: {info.get('slide_count', 0)}",
+        f"スライドサイズ: {info.get('slide_width_emu', 0)} x "
+        f"{info.get('slide_height_emu', 0)} EMU",
+        "",
+        "各スライドの見た目（PNG）とシェイプ構造を続けて添付します。",
+        "編集するには pptx スキルの scripts/edit_pptx.py を run_skill_script 経由で使用してください。",
+        f'artifact_id="{artifact_id}"',
+        "",
+    ]
+    for slide in info.get("slides", []):
+        si = slide.get("slide_idx", 0)
+        lines.append(f"--- スライド {si} ---")
+        for shape in slide.get("shapes", []):
+            idx = shape.get("idx", "?")
+            stype = shape.get("shape_type", "?")
+            x, y = shape.get("x", 0), shape.get("y", 0)
+            cx, cy = shape.get("cx", 0), shape.get("cy", 0)
+            fill = shape.get("fill_hex", "")
+            rot = shape.get("rot", 0)
+            desc = (
+                f"  shape[{idx}] type={stype} "
+                f"pos=({x},{y}) size=({cx},{cy}) rot={rot}"
+            )
+            if fill:
+                desc += f" fill=#{fill}"
+            lines.append(desc)
+            for tr in shape.get("text_runs", []):
+                lines.append(f"    text[p{tr['pi']},r{tr['ri']}]: {tr['text']!r}")
+        lines.append("")
+
+    parts: list[types.Part] = [types.Part(text="\n".join(lines))]
+    for slide in info.get("slides", []):
+        png_b64 = slide.get("png_base64")
+        if not png_b64:
+            continue
+        parts.append(types.Part(text=f"[スライド {slide.get('slide_idx', 0)} の見た目]"))
+        parts.append(types.Part.from_bytes(
+            data=base64.b64decode(png_b64),
+            mime_type="image/png",
+        ))
+    return parts
 
 
 async def _parse_request(
@@ -111,14 +151,23 @@ async def _parse_request(
         if text.strip():
             parts.append(types.Part(text=text))
 
-        # pptx_artifact_id が指定されている場合、既存アーティファクトからブリッジ経由でコンテキスト生成
+        # pptx_artifact_id が指定されている場合、既存アーティファクトを
+        # pptx_inspect.js で解析し、PNG + 構造情報を user message に付加
         if pptx_artifact_id:
             artifact = get_artifact(pptx_artifact_id)
             if artifact:
-                ctx = await _extract_pptx_context_via_bridge(
-                    artifact.data, threadId_to_session(thread_id), pptx_artifact_id,
+                logger.info(
+                    f"Chat context using existing artifact {pptx_artifact_id} "
+                    f"({len(artifact.data)} bytes, filename={artifact.filename})"
                 )
-                parts.append(types.Part(text=ctx))
+                pptx_parts = await _build_pptx_context_parts(
+                    artifact.data, pptx_artifact_id,
+                )
+                parts.extend(pptx_parts)
+            else:
+                logger.warning(
+                    f"pptxArtifactId={pptx_artifact_id} not found in artifact store"
+                )
 
         # ファイル取得
         raw_files: list[dict] = []
@@ -137,16 +186,15 @@ async def _parse_request(
                     )
 
                 if mime_type == PPTX_MIME_TYPE:
-                    # PPTX: アーティファクトに保存してブリッジ経由でコンテキスト生成
+                    # PPTX: アーティファクトに保存して pptx_inspect.js で解析、
+                    # PNG + 構造情報を user message に付加
                     aid = store_artifact(
                         thread_id=thread_id,
-                        filename=value.filename or "presentation.pptx",
+                        filename=value.filename or DEFAULT_ARTIFACT_FILENAME,
                         data=file_bytes,
                     )
-                    ctx = await _extract_pptx_context_via_bridge(
-                        file_bytes, threadId_to_session(thread_id), aid,
-                    )
-                    parts.append(types.Part(text=ctx))
+                    pptx_parts = await _build_pptx_context_parts(file_bytes, aid)
+                    parts.extend(pptx_parts)
                 else:
                     # 画像/PDF等はGeminiインラインパーツとして渡す
                     parts.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
@@ -180,11 +228,6 @@ async def _parse_request(
     return parts, thread_id, user_id, {}
 
 
-def threadId_to_session(thread_id: str) -> str:
-    """Convert thread_id to bridge session_id."""
-    return f"edit-{thread_id}"
-
-
 def _setup_request_stores(
     thread_id: str,
     attached_files: dict[str, dict] | None,
@@ -200,8 +243,6 @@ def _setup_request_stores(
 async def _cleanup_request_stores(thread_id: str = "") -> None:
     """リクエストストアをクリーンアップする。"""
     clear_pptx_thread_id()
-    clear_edit_session()
-    # ブリッジセッションのアンロードはしない（同一スレッドで再利用可能にするため）
 
 
 async def _get_or_create_session(user_id: str, thread_id: str):
@@ -282,20 +323,22 @@ async def _stream_agent_events(
                     for fr in function_responses:
                         tool_name = getattr(fr, "name", "unknown")
 
-                        # PPTX artifact marker detection
-                        response_data = getattr(fr, "response", {})
-                        if isinstance(response_data, dict) and response_data.get(
-                            PPTX_ARTIFACT_MARKER
-                        ):
+                        # PPTX artifact marker detection — skill scripts
+                        # (edit_pptx.py / generate_pptx.py) print a marker
+                        # line on stdout that chat.py surfaces via SSE.
+                        artifact_info = _extract_pptx_artifact(
+                            getattr(fr, "response", None),
+                        )
+                        if artifact_info:
                             logger.info(
                                 f"PPTX artifact detected for tool: {tool_name}"
                             )
                             pptx_event = {
                                 "type": "pptx_artifact",
-                                "artifact_id": response_data.get("artifact_id", ""),
-                                "filename": response_data.get("filename", ""),
-                                "size_bytes": response_data.get("size_bytes", 0),
-                                "download_url": response_data.get("download_url", ""),
+                                "artifact_id": artifact_info.get("artifact_id", ""),
+                                "filename": artifact_info.get("filename", ""),
+                                "size_bytes": artifact_info.get("size_bytes", 0),
+                                "download_url": artifact_info.get("download_url", ""),
                             }
                             yield f"data: {json.dumps(pptx_event, ensure_ascii=False)}\n\n"
 

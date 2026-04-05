@@ -15,11 +15,11 @@ import './PptxSlideViewer.css'
 
 export interface PptxSlideViewerHandle {
   /**
-   * If the PPTX has been edited, export it, upload to backend artifact store,
-   * and return the edited file so it can be attached to the chat message.
-   * Returns null if not modified.
+   * If the PPTX has been edited in the frontend, export it and PUT the bytes
+   * into the backend artifact store so the server-side artifact reflects the
+   * latest state before the next chat request. Returns true if updated.
    */
-  exportIfModified: () => Promise<File | null>
+  syncIfModified: () => Promise<boolean>
 }
 
 interface PptxSlideViewerProps {
@@ -38,28 +38,26 @@ export const PptxSlideViewer = forwardRef<PptxSlideViewerHandle, PptxSlideViewer
     const [selection, setSelection] = useState<ShapeInfo | null>(null)
     const selectedIdx = selection?.idx ?? -1
 
-    // Expose exportIfModified to parent
+    // Expose syncIfModified to parent — pushes the locally-edited bytes to
+    // the backend artifact store so the next chat request sees the latest state.
     useImperativeHandle(ref, () => ({
-      async exportIfModified() {
-        if (!renderer.modified) return null
+      async syncIfModified() {
+        if (!renderer.modified) return false
         try {
           const blob = await renderer.exportPptx()
-          // Update backend artifact store
-          await fetch(`${config.api.baseUrl}/artifacts/${artifactId}`, {
+          const resp = await fetch(`${config.api.baseUrl}/artifacts/${artifactId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/octet-stream' },
             body: blob,
           })
-          // Return as File so it can be attached to the chat message
-          return new File([blob], filename, {
-            type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-          })
+          if (resp.ok) renderer.markSynced()
+          return resp.ok
         } catch (e) {
-          console.error('Failed to export edited PPTX:', e)
-          return null
+          console.error('Failed to sync edited PPTX:', e)
+          return false
         }
       },
-    }), [renderer, artifactId, filename])
+    }), [renderer, artifactId])
 
     // Load PPTX from API
     useEffect(() => {

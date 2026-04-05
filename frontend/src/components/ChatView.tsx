@@ -19,11 +19,11 @@ interface ChatViewProps {
   onUpdateSession: (session: ChatSession) => void
   onNewChat: () => void
   onPptxArtifactChange?: (artifact: PptxArtifactData | null) => void
-  getEditedPptxFile?: () => Promise<File | null>
+  syncEditedPptx?: () => Promise<boolean>
   activePptxArtifactId?: string
 }
 
-export function ChatView({ session, onUpdateSession, onNewChat, onPptxArtifactChange, getEditedPptxFile, activePptxArtifactId }: ChatViewProps) {
+export function ChatView({ session, onUpdateSession, onNewChat, onPptxArtifactChange, syncEditedPptx, activePptxArtifactId }: ChatViewProps) {
   const [input, setInput] = useState('')
   const [isComposing, setIsComposing] = useState(false)
   const [savedPromptsOpen, setSavedPromptsOpen] = useState(false)
@@ -60,20 +60,12 @@ export function ChatView({ session, onUpdateSession, onNewChat, onPptxArtifactCh
 
   const handleSend = async () => {
     if (!session) { onNewChat(); return }
-    // If a PPTX artifact is active, pass its ID so backend uses bridge for context.
-    // If the user has edited the PPTX, also upload the edited file to update the artifact.
-    let filesToSend = attachedFiles
-    let pptxArtifactId = activePptxArtifactId
-    if (getEditedPptxFile) {
-      const editedFile = await getEditedPptxFile()
-      if (editedFile) {
-        filesToSend = [...filesToSend, editedFile]
-        // When edited file is sent, backend will store it as new artifact and use bridge
-        // Clear the artifact ID so backend uses the uploaded file instead
-        pptxArtifactId = undefined
-      }
+    // Push any frontend edits to the server's artifact store first so the
+    // backend's context for activePptxArtifactId reflects the latest state.
+    if (syncEditedPptx) {
+      await syncEditedPptx()
     }
-    sendMessage(input, filesToSend, session, onNewChat, createAttachmentMeta, pptxArtifactId)
+    sendMessage(input, attachedFiles, session, onNewChat, createAttachmentMeta, activePptxArtifactId)
     setInput('')
     setAttachedFiles([])
   }

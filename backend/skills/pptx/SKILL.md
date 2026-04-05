@@ -10,10 +10,9 @@ license: Proprietary. LICENSE.txt has complete terms
 
 | Task | Method |
 |------|--------|
-| Read/analyze content | `load_pptx` → `get_slide_shapes` |
-| Edit existing PPTX | Read [editing.md](editing.md) — pptx-svg ブリッジ使用 |
-| Create from scratch | Read [pptxgenjs.md](pptxgenjs.md) — PptxGenJS 使用 |
-| Visual QA | `render_slide_svg` でSVGプレビュー |
+| Read/analyze content | ユーザーメッセージの PNG + 構造情報 を直接見る |
+| Edit existing PPTX | `run_skill_script(skill_name="pptx", script_path="scripts/edit_pptx.py", ...)` — [editing.md](references/editing.md) |
+| Create from scratch | `run_skill_script(skill_name="pptx", script_path="scripts/generate_pptx.py", ...)` — [pptxgenjs.md](references/pptxgenjs.md) |
 
 ---
 
@@ -21,48 +20,70 @@ license: Proprietary. LICENSE.txt has complete terms
 
 ### 既存PPTXの編集（artifact_id がある場合）
 
-ユーザーのメッセージに `artifact_id` が含まれている場合、**必ず編集ツールを使用**:
+ユーザーのメッセージに `artifact_id` が含まれている場合、**必ず edit_pptx.py を使用**:
 
-1. `load_pptx(artifact_id)` でロード
-2. `get_slide_shapes(slide_idx)` で構造確認
-3. `edit_shape_text` / `edit_shape_fill` / `edit_shape_transform` で変更
-4. `render_slide_svg(slide_idx)` で視覚的確認
-5. `save_edited_pptx(filename)` で保存
+ユーザーメッセージには各スライドの PNG 画像と全シェイプの構造情報
+（テキスト・位置・色）が最初から含まれています。
 
-**⚠️ artifact_id がある場合に PptxGenJS で新規作成してはいけません。** ユーザーの編集内容が失われます。
+1. PNG と構造情報を見て、何を変える・追加すべきか判断
+2. `run_skill_script` 経由で `scripts/edit_pptx.py` を実行し、ops をまとめて適用
+
+**「編集」には次がすべて含まれます:**
+- 既存シェイプのテキスト・色・位置サイズ変更
+- 新しい情報を調べてスライドを追加（`duplicate_slide` + text ops）
+- スライドの複製・削除・並べ替え
+
+**⚠️ artifact_id がある場合に generate_pptx.py で新規作成してはいけません。** ユーザーの編集内容が失われます。
 
 ### 新規作成（artifact_id がない場合）
 
-テンプレートや既存ファイルがない場合のみ PptxGenJS を使用。
+テンプレートや既存ファイルがない場合のみ generate_pptx.py を使用。
 
 ---
 
 ## Reading Content
 
-```
-load_pptx(artifact_id) → 全スライドのシェイプ情報を取得
-get_slide_shapes(slide_idx) → 特定スライドの詳細情報
-render_slide_svg(slide_idx) → SVGで視覚的に確認
-```
+ユーザーメッセージに添付された **各スライドの PNG 画像** と **シェイプ構造 JSON**
+が最優先の情報源です。ユーザーがローカルで編集した直後でも、サーバー側の最新
+artifact が自動的に解析されて添付されます。
 
 ---
 
-## Editing Workflow (pptx-svg)
+## Editing Workflow (python-pptx)
 
-**Read [editing.md](editing.md) for full details.**
+**Read [references/editing.md](references/editing.md) for full details.**
 
-pptx-svg ブリッジによるシェイプ単位の編集:
-- テキスト変更: `edit_shape_text`
-- 色変更: `edit_shape_fill`
-- 位置/サイズ変更: `edit_shape_transform`
-
-LibreOffice や unpack/pack は不要です。
+`edit_pptx.py` に ops を JSON 文字列で渡すだけで一括編集:
+- テキスト変更: `{"type":"text", "slide":..., "shape":..., "para":..., "run":..., "text":"..."}`
+- 色変更: `{"type":"fill", "slide":..., "shape":..., "r":..., "g":..., "b":...}`
+- 位置/サイズ変更: `{"type":"transform", "slide":..., "shape":..., "x":..., "y":..., "cx":..., "cy":..., "rot":...}`
+- **スライド複製**: `{"type":"duplicate_slide", "source":..., "insert_after":...}`
+- スライド削除: `{"type":"delete_slide", "slide":...}`
 
 ---
 
 ## Creating from Scratch
 
-**Read [pptxgenjs.md](pptxgenjs.md) for full details.**
+**Read [references/pptxgenjs.md](references/pptxgenjs.md) for full details.**
+
+`scripts/generate_pptx.py` に PptxGenJS の JavaScript コードを `code` 引数として渡すと、
+Node.js で実行して PPTX を生成し、アーティファクトストアに保存します。
+
+```python
+run_skill_script(
+    skill_name="pptx",
+    script_path="scripts/generate_pptx.py",
+    script_args={
+        "code": "(async () => { const pptxgen = require('pptxgenjs'); ... })();",
+        "output_filename": "deck.pptx",
+    },
+)
+```
+
+要件:
+- JS 全体を `(async () => { ... })();` で包む
+- 出力は `await pres.writeFile({ fileName: process.env.PPTX_OUTPUT_PATH })`
+- pptxgenjs, react, react-dom, react-icons, sharp はグローバルインストール済み
 
 Use when no template or reference presentation is available.
 
@@ -164,21 +185,15 @@ Choose colors that match your topic — don't default to generic blue. Use these
 
 ### Content QA
 
-```
-load_pptx(artifact_id) で全スライド情報を確認
-```
+ユーザーメッセージの PNG 画像と構造情報で大部分の QA は完了します。
+編集後は次のターンで最新 PNG が自動的に再添付されます（サーバーが artifact を再解析）。
 
 Check for missing content, typos, wrong order.
 
 ### Visual QA
 
-編集後は `render_slide_svg` でスライドを確認:
-
-```
-render_slide_svg(slide_idx=0)
-render_slide_svg(slide_idx=1)
-...
-```
+edit_pptx.py の stdout に含まれる `applied` で各 op の成否を確認。
+視覚的な最終確認は次のターンで（ユーザーの再依頼時に最新 PNG が添付されます）。
 
 Look for:
 - Overlapping elements (text through shapes)
@@ -189,17 +204,18 @@ Look for:
 
 ### Verification Loop
 
-1. Edit → Render SVG → Inspect
+1. PNG + 構造を見て問題を特定
 2. **List issues found** (if none found, look again more critically)
-3. Fix issues with edit_shape_* tools
-4. **Re-verify affected slides**
-5. Repeat until a full pass reveals no new issues
+3. `edit_pptx.py` で ops をまとめて適用
+4. stdout の `applied` で成否確認
+5. 失敗があれば修正して再実行
 
 ---
 
 ## Dependencies
 
-- `pptx-svg` (npm, グローバルインストール済み) — PPTX読み込み・編集・SVGレンダリング
-- `jsdom` (npm, グローバルインストール済み) — SVG解析
+- `python-pptx` (Python) — PPTX 編集（テキスト/色/位置/スライド追加・削除）
+- `pptx-svg` (npm, グローバルインストール済み) — PNGレンダリング（サーバー側・フロント側）
+- `jsdom` (npm) — SVG解析（inspect 用）
 - `pptxgenjs` (npm, グローバルインストール済み) — 新規作成用
 - `react`, `react-dom`, `react-icons`, `sharp` (npm) — アイコン生成用

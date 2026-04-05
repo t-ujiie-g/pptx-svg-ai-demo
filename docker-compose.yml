@@ -12,6 +12,7 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://frontend:3000}
     volumes:
       - ./backend/src:/app/src:ro
+      - ./backend/skills:/app/skills:ro
       - ~/.config/gcloud:/root/.config/gcloud:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

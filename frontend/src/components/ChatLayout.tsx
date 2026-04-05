@@ -70,12 +70,13 @@ export function ChatLayout() {
     setPptxMaximized(false)
   }
 
-  // Get edited PPTX file to attach to chat message
-  const getEditedPptxFile = useCallback(async (): Promise<File | null> => {
+  // Push any frontend edits to the backend artifact store before the next
+  // chat request so the server sees the latest PPTX state.
+  const syncEditedPptx = useCallback(async (): Promise<boolean> => {
     if (pptxViewerRef.current) {
-      return pptxViewerRef.current.exportIfModified()
+      return pptxViewerRef.current.syncIfModified()
     }
-    return null
+    return false
   }, [])
 
   if (isLoading) {
@@ -121,7 +122,7 @@ export function ChatLayout() {
               onUpdateSession={handleUpdateSession}
               onNewChat={handleNewChat}
               onPptxArtifactChange={setActivePptxArtifact}
-              getEditedPptxFile={getEditedPptxFile}
+              syncEditedPptx={syncEditedPptx}
               activePptxArtifactId={activePptxArtifact?.artifactId}
             />
           </div>

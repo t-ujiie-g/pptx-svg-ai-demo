@@ -32,15 +32,22 @@ MAX_READ_FILE_SIZE = 1 * 1024 * 1024        # 1 MB — agent-read files
 # ──────────────────────────────────────────────────────────────────────
 # Timeouts (seconds)
 # ──────────────────────────────────────────────────────────────────────
-PPTXGENJS_SCRIPT_TIMEOUT = 120              # subprocess.run() for PptxGenJS
 SKILL_SCRIPT_TIMEOUT = 600                  # skill code executor
-BRIDGE_STARTUP_TIMEOUT = 30                 # Node.js bridge "ready" handshake
-BRIDGE_CALL_TIMEOUT = 120                   # single JSON-RPC call
+PPTX_INSPECT_TIMEOUT = 120                  # pptx_inspect.js subprocess
 
 # ──────────────────────────────────────────────────────────────────────
 # Artifact store
 # ──────────────────────────────────────────────────────────────────────
 ARTIFACT_TTL = timedelta(hours=1)
+DEFAULT_ARTIFACT_FILENAME = "presentation.pptx"
+SKILL_ARTIFACT_THREAD_ID = "skill"          # thread_id for artifacts posted by skills
+
+# ──────────────────────────────────────────────────────────────────────
+# PPTX artifact marker
+# ──────────────────────────────────────────────────────────────────────
+# Marker line printed by skill scripts (edit_pptx.py, generate_pptx.py) on
+# stdout so chat.py can surface the new artifact via SSE.
+PPTX_ARTIFACT_MARKER = "__PPTX_ARTIFACT__"
 
 # ──────────────────────────────────────────────────────────────────────
 # File bridge

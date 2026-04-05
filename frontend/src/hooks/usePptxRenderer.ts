@@ -70,6 +70,8 @@ export function usePptxRenderer() {
     })
   }, [])
 
+  const markSynced = useCallback(() => setModified(false), [])
+
   return {
     ready,
     slide,
@@ -82,5 +84,6 @@ export function usePptxRenderer() {
     updateText,
     updateFill,
     exportPptx,
+    markSynced,
   }
 }
