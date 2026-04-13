@@ -149,9 +149,9 @@ OP_HANDLERS = {
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--artifact-id", required=True)
+    ap.add_argument("--artifact_id", required=True)
     ap.add_argument("--ops", required=True, help="JSON array of ops")
-    ap.add_argument("--output-filename", default="updated.pptx")
+    ap.add_argument("--output_filename", default="updated.pptx")
     args = ap.parse_args()
 
     try:

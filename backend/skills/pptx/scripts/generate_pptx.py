@@ -41,7 +41,7 @@ NODE_TIMEOUT = 120
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--code", required=True, help="PptxGenJS JavaScript source")
-    ap.add_argument("--output-filename", default="presentation.pptx")
+    ap.add_argument("--output_filename", default="presentation.pptx")
     args = ap.parse_args()
 
     filename = args.output_filename
