@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install PptxGenJS and icon rendering dependencies globally
-RUN npm install -g pptxgenjs react react-dom react-icons sharp pptx-svg@0.5.2 jsdom
+RUN npm install -g pptxgenjs react react-dom react-icons sharp pptx-svg@0.5.3 jsdom
 
 # Copy project files
 COPY pyproject.toml ./
