@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useCallback, useRef, useState } from 'react'
 import { PptxArtifactData } from '../services/chatHistory'
 import { PptxSlideViewer, type PptxSlideViewerHandle } from './PptxSlideViewer'
 import { downloadFromApi } from '../config'
@@ -9,11 +9,40 @@ interface PptxPanelProps {
   maximized: boolean
   onToggleMaximize: () => void
   onClose: () => void
+  /** Auto-maximize when user selects a shape for editing */
+  onRequestMaximize?: () => void
 }
 
 export const PptxPanel = forwardRef<PptxSlideViewerHandle, PptxPanelProps>(
-  function PptxPanel({ artifact, maximized, onToggleMaximize, onClose }, ref) {
+  function PptxPanel({ artifact, maximized, onToggleMaximize, onClose, onRequestMaximize }, ref) {
+    const internalRef = useRef<PptxSlideViewerHandle>(null)
+    const [modified, setModified] = useState(false)
     const handleDownload = () => downloadFromApi(artifact.downloadUrl, artifact.filename)
+
+    const handleSelectionChange = useCallback((hasSelection: boolean) => {
+      if (hasSelection && !maximized && onRequestMaximize) {
+        onRequestMaximize()
+      }
+    }, [maximized, onRequestMaximize])
+
+    // Download: if edited, export the edited version; otherwise download original
+    const handleDownloadSmart = useCallback(async () => {
+      if (modified && internalRef.current) {
+        await internalRef.current.exportPptx()
+      } else {
+        handleDownload()
+      }
+    }, [modified, handleDownload])
+
+    // Merge refs: expose to parent + keep internal reference
+    const setRefs = useCallback((handle: PptxSlideViewerHandle | null) => {
+      (internalRef as React.MutableRefObject<PptxSlideViewerHandle | null>).current = handle
+      if (typeof ref === 'function') {
+        ref(handle)
+      } else if (ref) {
+        (ref as React.MutableRefObject<PptxSlideViewerHandle | null>).current = handle
+      }
+    }, [ref])
 
     return (
       <div className="pptx-panel">
@@ -28,7 +57,7 @@ export const PptxPanel = forwardRef<PptxSlideViewerHandle, PptxPanelProps>(
           <div className="pptx-panel-actions">
             <button
               className="pptx-panel-action-btn"
-              onClick={handleDownload}
+              onClick={handleDownloadSmart}
               title="ダウンロード"
               aria-label="ダウンロード"
             >
@@ -69,11 +98,13 @@ export const PptxPanel = forwardRef<PptxSlideViewerHandle, PptxPanelProps>(
         </div>
         <div className="pptx-panel-body">
           <PptxSlideViewer
-            ref={ref}
+            ref={setRefs}
             artifactId={artifact.artifactId}
             filename={artifact.filename}
             downloadUrl={artifact.downloadUrl}
-            showHeader={false}
+            maximized={maximized}
+            onSelectionChange={handleSelectionChange}
+            onModifiedChange={setModified}
           />
         </div>
       </div>

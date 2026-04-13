@@ -127,11 +127,13 @@ async def _build_pptx_context_parts(
 
 async def _parse_request(
     request: Request,
-) -> tuple[list[types.Part], str, str, dict[str, dict]]:
+) -> tuple[list[types.Part], str, str, dict[str, dict], list[dict]]:
     """JSONまたはmultipartリクエストをパースする。
 
     Returns:
-        Tuple of (parts, thread_id, user_id, attached_files).
+        Tuple of (parts, thread_id, user_id, attached_files, uploaded_pptx_artifacts).
+        uploaded_pptx_artifacts contains dicts with artifact_id/filename/size_bytes/download_url
+        for each PPTX file uploaded in this request.
 
     Raises:
         ValueError: If the request body is invalid.
@@ -148,6 +150,7 @@ async def _parse_request(
         pptx_artifact_id = str(form.get("pptxArtifactId", ""))
 
         parts: list[types.Part] = []
+        uploaded_pptx: list[dict] = []
         if text.strip():
             parts.append(types.Part(text=text))
 
@@ -188,11 +191,18 @@ async def _parse_request(
                 if mime_type == PPTX_MIME_TYPE:
                     # PPTX: アーティファクトに保存して pptx_inspect.js で解析、
                     # PNG + 構造情報を user message に付加
+                    fname = value.filename or DEFAULT_ARTIFACT_FILENAME
                     aid = store_artifact(
                         thread_id=thread_id,
-                        filename=value.filename or DEFAULT_ARTIFACT_FILENAME,
+                        filename=fname,
                         data=file_bytes,
                     )
+                    uploaded_pptx.append({
+                        "artifact_id": aid,
+                        "filename": fname,
+                        "size_bytes": len(file_bytes),
+                        "download_url": f"/artifacts/{aid}",
+                    })
                     pptx_parts = await _build_pptx_context_parts(file_bytes, aid)
                     parts.extend(pptx_parts)
                 else:
@@ -210,7 +220,7 @@ async def _parse_request(
             raise ValueError("テキストまたはファイルを入力してください")
 
         attached_files = store_attached_files(raw_files) if raw_files else {}
-        return parts, thread_id, user_id, attached_files
+        return parts, thread_id, user_id, attached_files, uploaded_pptx
 
     # JSON リクエスト（従来互換）
     body = await request.json()
@@ -225,7 +235,7 @@ async def _parse_request(
     thread_id = body.get("threadId", DEFAULT_THREAD_ID)
     user_id = body.get("userId", DEFAULT_USER_ID)
     parts = [types.Part(text=last_message)]
-    return parts, thread_id, user_id, {}
+    return parts, thread_id, user_id, {}, []
 
 
 def _setup_request_stores(
@@ -282,8 +292,15 @@ async def _stream_agent_events(
     thread_id: str,
     user_id: str,
     attached_files: dict[str, dict] | None = None,
+    uploaded_pptx: list[dict] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream agent events as SSE format."""
+
+    # アップロードされたPPTXがあれば、エージェント処理前に即座にプレビュー用イベントを送出
+    for info in uploaded_pptx or []:
+        pptx_event = {"type": "pptx_artifact", **info}
+        yield f"data: {json.dumps(pptx_event, ensure_ascii=False)}\n\n"
+
     root_agent = await get_root_agent(thread_id=thread_id)
 
     runner = Runner(
@@ -375,14 +392,14 @@ async def _stream_agent_events(
 async def chat_stream_endpoint(request: Request) -> StreamingResponse:
     """Streaming chat endpoint using Server-Sent Events (SSE)."""
     try:
-        parts, thread_id, user_id, attached_files = await _parse_request(request)
+        parts, thread_id, user_id, attached_files, uploaded_pptx = await _parse_request(request)
     except (ValueError, Exception) as e:
         logger.error(f"Failed to parse request: {e}")
         error_gen = _error_generator(str(e))
         return StreamingResponse(error_gen, media_type="text/event-stream")
 
     return StreamingResponse(
-        _stream_agent_events(parts, thread_id, user_id, attached_files),
+        _stream_agent_events(parts, thread_id, user_id, attached_files, uploaded_pptx),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -133,6 +133,7 @@ export function ChatLayout() {
               maximized={pptxMaximized}
               onToggleMaximize={() => setPptxMaximized((v) => !v)}
               onClose={handleClosePptx}
+              onRequestMaximize={() => setPptxMaximized(true)}
             />
           )}
         </div>

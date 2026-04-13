@@ -1,9 +1,20 @@
 /**
  * SVG DOM utilities for pptx-svg editing.
- * Based on pptx-svg React example (utils/svg.ts).
+ * Based on pptx-svg React example (utils/svg.ts) v0.5.2.
  */
 
 import { getShapeTransform, emuToPx } from 'pptx-svg'
+
+// ── Color ──
+
+/** Parse '#rrggbb' hex string to [r, g, b] tuple. */
+export function hexToRgb(hex: string): [number, number, number] {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ]
+}
 
 // ── Types ──
 
@@ -11,6 +22,22 @@ export interface TextRun {
   pi: number
   ri: number
   text: string
+  bold: boolean
+  italic: boolean
+  fontSize: number    // hundredths of a point (0 = inherit)
+  color: string       // hex 6-char (no #), '' = inherit
+  font: string        // Latin font name
+  eaFont: string      // East Asian font name
+  csFont: string      // Complex Script font name
+  underline: string   // 'sng', 'dbl', '' = none
+  strike: string      // 'sngStrike', 'dblStrike', '' = none
+  baseline: number    // 30000 = super, -25000 = sub, 0 = normal
+}
+
+export interface ParagraphInfo {
+  pi: number
+  align: string
+  runs: TextRun[]
 }
 
 export interface ShapeInfo {
@@ -18,7 +45,8 @@ export interface ShapeInfo {
   label: string
   detail: string
   fillHex: string
-  textRuns: TextRun[]
+  shapeType: string
+  paragraphs: ParagraphInfo[]
 }
 
 // ── Constants ──
@@ -28,10 +56,25 @@ export type HandlePos = (typeof HANDLE_POSITIONS)[number]
 
 /** Default EMU-per-CSS-pixel ratio (96 DPI). Used when SVG is not yet mounted. */
 export const EMU_PER_CSS_PX_DEFAULT = 9525
-/** Default PPTX slide width in EMU (10 inches, 16:9 widescreen). */
-export const DEFAULT_SLIDE_WIDTH_EMU = 9144000
 /** Minimum shape size in EMU for drag/resize (prevents zero-size shapes). */
 export const MIN_SHAPE_EMU = 50000
+
+// ── PPTX editing defaults (EMU) ──
+
+/** Default PPTX slide width in EMU (10 inches, 16:9 widescreen). */
+export const DEFAULT_SLIDE_CX = 9144000
+/** Default PPTX slide height in EMU (7.5 inches, 16:9 widescreen). */
+export const DEFAULT_SLIDE_CY = 6858000
+/** Default shape size for new shapes (2 inches in EMU). */
+export const DEFAULT_SHAPE_SIZE = 1828800
+/** Default image width (3 inches in EMU). */
+export const DEFAULT_IMAGE_CX = 2743200
+/** Default image height (2 inches in EMU). */
+export const DEFAULT_IMAGE_CY = 1828800
+/** Default stroke width (1pt in EMU). */
+export const DEFAULT_STROKE_WIDTH = 12700
+/** Default font size for addShapeText (18pt in hundredths of a point). */
+export const DEFAULT_FONT_SIZE = 1800
 
 // ── SVG insertion ──
 
@@ -92,7 +135,7 @@ export function getEmuPerCssPx(svgEl: SVGSVGElement | null): number {
   if (!svgEl) return EMU_PER_CSS_PX_DEFAULT
   const rect = svgEl.getBoundingClientRect()
   const slideCx = parseInt(
-    svgEl.getAttribute('data-ooxml-slide-cx') || String(DEFAULT_SLIDE_WIDTH_EMU),
+    svgEl.getAttribute('data-ooxml-slide-cx') || String(DEFAULT_SLIDE_CX),
     10,
   )
   return slideCx / rect.width
@@ -103,43 +146,64 @@ export function getEmuPerCssPx(svgEl: SVGSVGElement | null): number {
 export function extractShapeInfo(shapeG: SVGGElement): ShapeInfo {
   const idx = parseInt(shapeG.getAttribute('data-ooxml-shape-idx') ?? '-1', 10)
   const fillHex = shapeG.getAttribute('data-ooxml-fill') || ''
-
-  const t = getShapeTransform(shapeG)
   const shapeType = shapeG.getAttribute('data-ooxml-shape-type') || '?'
   const geom = shapeG.getAttribute('data-ooxml-geom') || ''
+
+  const t = getShapeTransform(shapeG)
 
   return {
     idx,
     label: `Shape #${idx} (${shapeType}${geom ? '/' + geom : ''})`,
     detail: `x=${emuToPx(t.x)}px y=${emuToPx(t.y)}px w=${emuToPx(t.cx)}px h=${emuToPx(t.cy)}px rot=${t.rot}`,
     fillHex: fillHex.length === 6 ? fillHex : '',
-    textRuns: extractTextRuns(shapeG),
+    shapeType,
+    paragraphs: extractParagraphs(shapeG),
   }
 }
 
-function extractTextRuns(shapeG: SVGGElement): TextRun[] {
-  const runTspans = shapeG.querySelectorAll('tspan[data-ooxml-run-idx]')
-  if (runTspans.length === 0) return []
+/** Extract paragraphs with full run formatting from SVG data attributes. */
+function extractParagraphs(shapeG: SVGGElement): ParagraphInfo[] {
+  const paraTspans = shapeG.querySelectorAll('tspan[data-ooxml-para-idx]')
+  const parasMap = new Map<number, ParagraphInfo>()
 
-  const seen = new Map<string, number>()
-  const runs: TextRun[] = []
+  for (const pts of paraTspans) {
+    const pi = parseInt(pts.getAttribute('data-ooxml-para-idx')!)
+    if (!parasMap.has(pi)) {
+      parasMap.set(pi, {
+        pi,
+        align: pts.getAttribute('data-ooxml-para-align') || 'l',
+        runs: [],
+      })
+    }
+    const para = parasMap.get(pi)!
+    const runTspans = pts.querySelectorAll('tspan[data-ooxml-run-idx]')
 
-  for (const ts of runTspans) {
-    const ri = ts.getAttribute('data-ooxml-run-idx')
-    const paraTspan = ts.closest('tspan[data-ooxml-para-idx]')
-    const pi = paraTspan ? paraTspan.getAttribute('data-ooxml-para-idx') : null
-    if (pi === null || ri === null) continue
-
-    const key = `${pi}:${ri}`
-    if (seen.has(key)) {
-      runs[seen.get(key)!].text += ts.textContent || ''
-    } else {
-      seen.set(key, runs.length)
-      runs.push({ pi: parseInt(pi), ri: parseInt(ri), text: ts.textContent || '' })
+    for (const rts of runTspans) {
+      const ri = parseInt(rts.getAttribute('data-ooxml-run-idx')!)
+      const existing = para.runs.find(r => r.ri === ri)
+      if (existing) {
+        existing.text += rts.textContent || ''
+      } else {
+        para.runs.push({
+          pi,
+          ri,
+          text: rts.textContent || '',
+          bold: rts.getAttribute('data-ooxml-bold') === 'true',
+          italic: rts.getAttribute('font-style') === 'italic',
+          fontSize: parseInt(rts.getAttribute('data-ooxml-font-size') || '0'),
+          color: rts.getAttribute('data-ooxml-color') || '',
+          font: rts.getAttribute('data-ooxml-run-font') || '',
+          eaFont: rts.getAttribute('data-ooxml-ea-font') || '',
+          csFont: rts.getAttribute('data-ooxml-cs-font') || '',
+          underline: rts.getAttribute('data-ooxml-underline') || '',
+          strike: rts.getAttribute('data-ooxml-strike') || '',
+          baseline: parseInt(rts.getAttribute('data-ooxml-baseline') || '0'),
+        })
+      }
     }
   }
 
-  return runs
+  return Array.from(parasMap.values())
 }
 
 // ── Imperative helpers ──
