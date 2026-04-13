@@ -6,8 +6,12 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Google Cloud
-    google_cloud_project: str
+    # Gemini backend selection
+    # - Vertex AI: set google_genai_use_vertexai=True and google_cloud_project
+    # - Gemini API: set google_genai_use_vertexai=False and google_api_key
+    google_genai_use_vertexai: bool = False
+    google_api_key: str | None = None
+    google_cloud_project: str | None = None
     google_cloud_location: str = "global"
     genai_model: str = "gemini-3-flash-preview"
     pptx_agent_model: str = "gemini-3.1-pro-preview"

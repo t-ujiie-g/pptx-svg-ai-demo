@@ -6,10 +6,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_GENAI_USE_VERTEXAI=${GOOGLE_GENAI_USE_VERTEXAI:-FALSE}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-global}
-      - GOOGLE_GENAI_USE_VERTEXAI=${GOOGLE_GENAI_USE_VERTEXAI:-TRUE}
-      - PPTX_AGENT_MODEL=${PPTX_AGENT_MODEL:-claude-opus-4-6}
+      - GENAI_MODEL=${GENAI_MODEL:-gemini-3-flash-preview}
+      - PPTX_AGENT_MODEL=${PPTX_AGENT_MODEL:-gemini-3.1-pro-preview}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://frontend:3000}
     volumes:
       - ./backend/src:/app/src:ro

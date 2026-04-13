@@ -116,11 +116,14 @@ async def generate_template(request: GenerateTemplateRequest) -> GenerateTemplat
         for m in request.messages
     )
 
-    client = genai.Client(
-        vertexai=True,
-        project=settings.google_cloud_project,
-        location=settings.google_cloud_location,
-    )
+    if settings.google_genai_use_vertexai:
+        client = genai.Client(
+            vertexai=True,
+            project=settings.google_cloud_project,
+            location=settings.google_cloud_location,
+        )
+    else:
+        client = genai.Client(api_key=settings.google_api_key)
 
     response = await client.aio.models.generate_content(
         model=settings.genai_model,
