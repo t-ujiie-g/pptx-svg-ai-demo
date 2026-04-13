@@ -65,7 +65,8 @@ def build_pptx_agent() -> LlmAgent:
         model=settings.pptx_agent_model,
         description=(
             "プレゼンテーション（PPTX）の作成・編集を担当。"
-            "スライドデッキの新規作成、既存PPTXの編集（テキスト・配色・レイアウト変更）。"
+            "スライドデッキの新規作成、既存PPTXの編集（テキスト・配色・レイアウト・"
+            "図形追加/削除・枠線・テキスト書式・スライド管理）。"
         ),
         instruction=_PPTX_AGENT_INSTRUCTION,
         tools=tools,
@@ -87,7 +88,10 @@ _PPTX_AGENT_INSTRUCTION = """\
 
 「編集」には次のすべてが含まれます:
   - 既存シェイプのテキスト/色/位置サイズ変更
-  - 新しい情報を調べてスライドを追加（duplicate_slide + text ops）
+  - 新しいシェイプの追加（図形・テキストボックス・画像）
+  - シェイプの削除・複製
+  - テキストの書式変更（太字・斜体・フォント・サイズ・色）
+  - 段落やランの追加
   - スライドの複製・削除・並べ替え
 
 artifact_id が無い場合のみ、新規作成（generate_pptx.py）を使用してください。
@@ -113,14 +117,47 @@ run_skill_script(
 ops は JSON 文字列として渡し、先頭から順に適用されます。スライドを追加/削除
 した後は新しいインデックスで指定してください。
 
-サポートされる ops:
-  - text: {"type":"text", "slide":0, "shape":2, "para":0, "run":0, "text":"..."}
-  - fill: {"type":"fill", "slide":0, "shape":2, "r":68, "g":114, "b":196}
-  - transform: {"type":"transform", "slide":0, "shape":2, "x":..., "y":..., "cx":..., "cy":..., "rot":...}
-  - duplicate_slide: {"type":"duplicate_slide", "source":3, "insert_after":3}
-  - delete_slide: {"type":"delete_slide", "slide":4}
+■ シェイプの内容変更:
+  text:            {"type":"text", "slide":0, "shape":2, "para":0, "run":0, "text":"..."}
+  fill:            {"type":"fill", "slide":0, "shape":2, "r":68, "g":114, "b":196}
+  fill_none:       {"type":"fill_none", "slide":0, "shape":2}
+  transform:       {"type":"transform", "slide":0, "shape":2, "x":X, "y":Y, "cx":CX, "cy":CY, "rot":ROT}
+  stroke:          {"type":"stroke", "slide":0, "shape":2, "r":0, "g":0, "b":0, "width":12700, "dash":"solid"}
+  stroke_none:     {"type":"stroke_none", "slide":0, "shape":2}
+
+■ シェイプの追加・削除・複製:
+  add_shape:       {"type":"add_shape", "slide":0, "shape_type":"rect", "x":X, "y":Y, "cx":CX, "cy":CY,
+                    "fill_r":R, "fill_g":G, "fill_b":B,
+                    "text":"テキスト", "font_size":14, "font_name":"Yu Gothic", "font_bold":true,
+                    "color_r":255, "color_g":255, "color_b":255, "align":"center",
+                    "stroke_r":0, "stroke_g":0, "stroke_b":0, "stroke_width":12700}
+                   ※ fill/text/stroke/font は全て省略可。1つの op でテキスト付き図形を作成可能。
+                   shape_type: rect, ellipse, roundRect, triangle, diamond, rightArrow, leftArrow 等
+  delete_shape:    {"type":"delete_shape", "slide":0, "shape":2}
+  duplicate_shape: {"type":"duplicate_shape", "slide":0, "shape":2, "dx":457200, "dy":457200}
+
+■ テキスト編集:
+  add_paragraph:   {"type":"add_paragraph", "slide":0, "shape":2, "text":"...", "align":"center"}
+  add_run:         {"type":"add_run", "slide":0, "shape":2, "para":0, "text":"..."}
+  text_style:      {"type":"text_style", "slide":0, "shape":2, "para":0, "run":0,
+                    "bold":true, "italic":false, "font_size":18, "font_name":"Yu Gothic",
+                    "color_r":255, "color_g":0, "color_b":0}
+                   ※ 全フィールド省略可。指定したもののみ変更。
+  paragraph_align: {"type":"paragraph_align", "slide":0, "shape":2, "para":0, "align":"center"}
+                   align: left, center, right, justify
+
+■ 画像の追加:
+  add_image:       {"type":"add_image", "slide":0, "image_base64":"...", "mime":"image/png",
+                    "x":X, "y":Y, "cx":CX, "cy":CY}
+
+■ スライド管理:
+  duplicate_slide: {"type":"duplicate_slide", "source":3, "insert_after":3}
+  delete_slide:    {"type":"delete_slide", "slide":4}
+  reorder_slides:  {"type":"reorder_slides", "order":[2,0,1,3]}
 
 座標・サイズは EMU（1インチ = 914400 EMU）、rot は 60000分の1度（90度 = 5400000）。
+stroke の width も EMU（1pt = 12700 EMU）。font_size は pt 単位（例: 18）。
+dash: solid, dash, dot, dashDot, lgDash
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 【新規作成】scripts/generate_pptx.py

@@ -340,12 +340,19 @@ async def _stream_agent_events(
                     for fr in function_responses:
                         tool_name = getattr(fr, "name", "unknown")
 
+                        # Log skill script output for debugging
+                        fr_response = getattr(fr, "response", None)
+                        if isinstance(fr_response, dict) and "stdout" in fr_response:
+                            stdout_text = fr_response["stdout"]
+                            if stdout_text:
+                                for line in stdout_text.splitlines():
+                                    if not line.startswith(PPTX_ARTIFACT_MARKER):
+                                        logger.info(f"Skill script [{tool_name}]: {line}")
+
                         # PPTX artifact marker detection — skill scripts
                         # (edit_pptx.py / generate_pptx.py) print a marker
                         # line on stdout that chat.py surfaces via SSE.
-                        artifact_info = _extract_pptx_artifact(
-                            getattr(fr, "response", None),
-                        )
+                        artifact_info = _extract_pptx_artifact(fr_response)
                         if artifact_info:
                             logger.info(
                                 f"PPTX artifact detected for tool: {tool_name}"
