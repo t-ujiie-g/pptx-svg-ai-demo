@@ -37,36 +37,14 @@ import io
 import json
 import os
 import sys
-import urllib.parse
-import urllib.request
 from copy import deepcopy
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Emu
 
-BASE_URL = os.environ.get("ARTIFACT_BASE_URL", "http://localhost:8000")
-ARTIFACT_MARKER = "__PPTX_ARTIFACT__"
-
-
-def fetch_artifact(artifact_id: str) -> bytes:
-    req = urllib.request.Request(f"{BASE_URL}/artifacts/{artifact_id}")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read()
-
-
-def post_artifact(data: bytes, filename: str, source_artifact_id: str) -> dict:
-    url = (
-        f"{BASE_URL}/artifacts"
-        f"?filename={urllib.parse.quote(filename)}"
-        f"&source_artifact_id={urllib.parse.quote(source_artifact_id)}"
-    )
-    req = urllib.request.Request(
-        url, data=data, method="POST",
-        headers={"Content-Type": "application/octet-stream"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from artifact_client import fetch_artifact, post_artifact, print_artifact_marker
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -219,7 +197,7 @@ def main():
     # Report per-op status (for LLM to see).
     print(json.dumps({"applied": applied}, ensure_ascii=False))
     # Marker line for chat.py SSE dispatcher.
-    print(f"{ARTIFACT_MARKER} {json.dumps(result)}")
+    print_artifact_marker(result)
 
 
 if __name__ == "__main__":

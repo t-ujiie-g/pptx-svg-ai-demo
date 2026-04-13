@@ -48,43 +48,6 @@ def store_attached_files(files: list[dict]) -> dict[str, dict]:
     return result
 
 
-def store_generated_file(
-    session_id: str,
-    file_name: str,
-    mime_type: str,
-    data_bytes: bytes,
-) -> str:
-    """生成ファイルを file_store に追加し file_id を返す。
-
-    スライド等のツールが生成したファイルを file_bridge に格納して、
-    後続ターンで再利用（修正依頼など）できるようにする。
-
-    Args:
-        session_id: ADK セッション ID。
-        file_name: ファイル名。
-        mime_type: MIME タイプ。
-        data_bytes: ファイルのバイトデータ。
-
-    Returns:
-        新規発行された file_id。
-    """
-    file_id = _new_file_id()
-    meta = {
-        "file_name": file_name,
-        "mime_type": mime_type,
-        "size_bytes": len(data_bytes),
-        "data_base64": base64.b64encode(data_bytes).decode("ascii"),
-    }
-    existing = _file_store.get(session_id, {})
-    existing[file_id] = meta
-    _file_store[session_id] = existing
-    logger.info(
-        "Stored generated file '%s' (file_id=%s) for session %s",
-        file_name, file_id, session_id,
-    )
-    return file_id
-
-
 def set_request_files(session_id: str, files: dict[str, dict]) -> None:
     """セッションにファイルデータを紐付ける（chat.py から呼ばれる）。"""
     _file_store[session_id] = files

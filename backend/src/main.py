@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from google.adk.models.anthropic_llm import Claude
+from google.adk.models.registry import LLMRegistry
 
 from src.api.artifacts import router as artifacts_router
 from src.api.chat import router as chat_router
@@ -12,6 +14,9 @@ from src.api.health import router as health_router
 from src.api.prompts import router as prompts_router
 from src.config import settings
 from src.constants import APP_VERSION
+
+# Register Claude model for VertexAI
+LLMRegistry.register(Claude)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

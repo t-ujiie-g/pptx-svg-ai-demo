@@ -62,7 +62,7 @@ def build_pptx_agent() -> LlmAgent:
 
     return LlmAgent(
         name="pptx_agent",
-        model=settings.genai_model,
+        model=settings.pptx_agent_model,
         description=(
             "プレゼンテーション（PPTX）の作成・編集を担当。"
             "スライドデッキの新規作成、既存PPTXの編集（テキスト・配色・レイアウト変更）。"

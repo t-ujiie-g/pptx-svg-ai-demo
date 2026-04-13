@@ -1,5 +1,7 @@
 """Artifacts API - Download, create, and update generated files (PPTX, etc.)."""
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -16,11 +18,15 @@ async def download_artifact(artifact_id: str) -> Response:
     if not artifact:
         return Response(content="Artifact not found", status_code=404)
 
+    # RFC 6266: use filename* with UTF-8 encoding for non-ASCII filenames
+    encoded = quote(artifact.filename)
     return Response(
         content=artifact.data,
         media_type=artifact.mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+            "Content-Disposition": (
+                f"attachment; filename*=UTF-8''{encoded}"
+            ),
             "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )

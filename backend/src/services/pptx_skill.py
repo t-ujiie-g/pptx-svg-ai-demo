@@ -95,5 +95,3 @@ async def inspect_pptx(
         args.append("--no-png")
     b64 = base64.b64encode(pptx_bytes)
     return await _run_node_script(_INSPECT_SCRIPT, b64, args)
-
-

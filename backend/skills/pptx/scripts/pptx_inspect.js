@@ -163,13 +163,17 @@ function readStdin() {
       slides.push(slideOut);
     }
 
-    process.stdout.write(JSON.stringify({
+    const ok = process.stdout.write(JSON.stringify({
       slide_count: slideCount,
       slide_width_emu: slideW,
       slide_height_emu: slideH,
       slides,
     }));
-    process.exit(0);
+    if (ok) {
+      process.exit(0);
+    } else {
+      process.stdout.once("drain", () => process.exit(0));
+    }
   } catch (err) {
     process.stderr.write(`pptx_inspect error: ${err && err.stack ? err.stack : err}\n`);
     process.exit(1);

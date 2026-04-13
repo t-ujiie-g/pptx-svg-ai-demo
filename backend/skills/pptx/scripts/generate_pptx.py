@@ -30,24 +30,12 @@ import os
 import subprocess
 import sys
 import tempfile
-import urllib.parse
-import urllib.request
 
-BASE_URL = os.environ.get("ARTIFACT_BASE_URL", "http://localhost:8000")
-ARTIFACT_MARKER = "__PPTX_ARTIFACT__"
-HTTP_TIMEOUT = 30
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from artifact_client import post_artifact, print_artifact_marker
+
 NODE_PATH = os.environ.get("NODE_PATH", "/usr/lib/node_modules")
 NODE_TIMEOUT = 120
-
-
-def post_artifact(data: bytes, filename: str) -> dict:
-    url = f"{BASE_URL}/artifacts?filename={urllib.parse.quote(filename)}"
-    req = urllib.request.Request(
-        url, data=data, method="POST",
-        headers={"Content-Type": "application/octet-stream"},
-    )
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-        return json.loads(resp.read())
 
 
 def main():
@@ -108,7 +96,7 @@ def main():
     if result.stdout:
         sys.stderr.write(result.stdout[:500])
 
-    print(f"{ARTIFACT_MARKER} {json.dumps(info)}")
+    print_artifact_marker(info)
 
 
 if __name__ == "__main__":
