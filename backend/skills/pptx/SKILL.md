@@ -57,6 +57,10 @@ artifact が自動的に解析されて添付されます。
 - テキスト変更: `{"type":"text", "slide":..., "shape":..., "para":..., "run":..., "text":"..."}`
 - 色変更: `{"type":"fill", "slide":..., "shape":..., "r":..., "g":..., "b":...}`
 - 位置/サイズ変更: `{"type":"transform", "slide":..., "shape":..., "x":..., "y":..., "cx":..., "cy":..., "rot":...}`
+- **テーブルセル編集**: `{"type":"table_cell_text", "slide":..., "shape":..., "row":..., "col":..., "text":"..."}`
+- **テーブル新規追加**: `{"type":"add_table", "slide":..., "rows":..., "cols":..., "x":..., "y":..., "cx":..., "cy":..., "data":[[...]]}`
+- **スライド背景色**: `{"type":"slide_background", "slide":..., "r":..., "g":..., "b":...}`
+- **箇条書き/インデント**: `{"type":"add_paragraph", "slide":..., "shape":..., "text":"...", "level":1, "bullet":"dot"}`
 - **スライド複製**: `{"type":"duplicate_slide", "source":..., "insert_after":...}`
 - スライド削除: `{"type":"delete_slide", "slide":...}`
 

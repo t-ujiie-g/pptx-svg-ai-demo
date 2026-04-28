@@ -110,6 +110,18 @@ async def _build_pptx_context_parts(
             lines.append(desc)
             for tr in shape.get("text_runs", []):
                 lines.append(f"    text[p{tr['pi']},r{tr['ri']}]: {tr['text']!r}")
+            tbl = shape.get("table")
+            if tbl:
+                lines.append(
+                    f"    table rows={tbl.get('rows', 0)} cols={tbl.get('cols', 0)}"
+                )
+                for r, row in enumerate(tbl.get("cells", [])):
+                    for c, cell in enumerate(row):
+                        suffix = ""
+                        if cell.get("fill_hex"):
+                            suffix = f" fill=#{cell['fill_hex']}"
+                        text = cell.get("text", "")
+                        lines.append(f"      cell[{r},{c}]{suffix}: {text!r}")
         lines.append("")
 
     parts: list[types.Part] = [types.Part(text="\n".join(lines))]
