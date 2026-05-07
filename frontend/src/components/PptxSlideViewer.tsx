@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
-import { config, downloadFromApi } from '../config'
+import { config, downloadFromApi, downloadFromBlob } from '../config'
 import { usePptxRenderer } from '../hooks/usePptxRenderer'
 import { usePptxDrag } from '../hooks/usePptxDrag'
 import {
@@ -19,6 +19,7 @@ import {
   type ShapeInfo,
 } from '../utils/pptxSvg'
 import { ShapeToolbar, TextPanel } from './PptxEditToolbar'
+import { getPptx as getPptxFromOpfs, savePptx as savePptxToOpfs } from '../services/pptxStorage'
 import './PptxSlideViewer.css'
 
 export interface PptxSlideViewerHandle {
@@ -31,6 +32,8 @@ interface PptxSlideViewerProps {
   artifactId: string
   filename: string
   downloadUrl: string
+  /** Owning chat session id (used as OPFS partition key for fallback storage) */
+  sessionId?: string | null
   /** Whether the panel is maximized (full editing mode) */
   maximized?: boolean
   /** Called when a shape is selected/deselected — parent can auto-maximize */
@@ -40,7 +43,7 @@ interface PptxSlideViewerProps {
 }
 
 export const PptxSlideViewer = forwardRef<PptxSlideViewerHandle, PptxSlideViewerProps>(
-  function PptxSlideViewer({ artifactId, filename, downloadUrl, maximized = false, onSelectionChange, onModifiedChange }, ref) {
+  function PptxSlideViewer({ artifactId, filename, downloadUrl, sessionId, maximized = false, onSelectionChange, onModifiedChange }, ref) {
     const renderer = usePptxRenderer()
     const containerRef = useRef<HTMLDivElement>(null)
     const [loading, setLoading] = useState(true)
@@ -65,7 +68,13 @@ export const PptxSlideViewer = forwardRef<PptxSlideViewerHandle, PptxSlideViewer
             headers: { 'Content-Type': 'application/octet-stream' },
             body: blob,
           })
-          if (resp.ok) renderer.markSynced()
+          if (resp.ok) {
+            renderer.markSynced()
+            // 編集版を OPFS にも保存し、TTL 切れやリロード後でも履歴で辿れるように。
+            if (sessionId) {
+              void savePptxToOpfs(sessionId, artifactId, filename, blob)
+            }
+          }
           return resp.ok
         } catch (e) {
           console.error('Failed to sync edited PPTX:', e)
@@ -74,16 +83,13 @@ export const PptxSlideViewer = forwardRef<PptxSlideViewerHandle, PptxSlideViewer
       },
       async exportPptx() {
         const blob = await renderer.exportPptx()
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
-        a.download = filename.replace(/\.pptx$/i, '') + '_edited.pptx'
-        a.click()
-        URL.revokeObjectURL(a.href)
+        const editedName = filename.replace(/\.pptx$/i, '') + '_edited.pptx'
+        downloadFromBlob(blob, editedName)
       },
       get modified() {
         return renderer.modified
       },
-    }), [renderer, artifactId, filename])
+    }), [renderer, artifactId, filename, sessionId])
 
     // Notify parent when modified state changes
     useEffect(() => {
@@ -101,9 +107,37 @@ export const PptxSlideViewer = forwardRef<PptxSlideViewerHandle, PptxSlideViewer
           setError(null)
           updateSelection(null)
 
-          const resp = await fetch(`${config.api.baseUrl}${downloadUrl}`)
-          if (!resp.ok) throw new Error(`Failed to fetch PPTX: ${resp.status}`)
-          const buffer = await resp.arrayBuffer()
+          // 1) backend から取得を試みる
+          let buffer: ArrayBuffer | null = null
+          try {
+            const resp = await fetch(`${config.api.baseUrl}${downloadUrl}`)
+            if (resp.ok) {
+              buffer = await resp.arrayBuffer()
+            } else {
+              console.warn(
+                `[PptxSlideViewer] backend ${resp.status} for ${artifactId}, ` +
+                  `falling back to OPFS`,
+              )
+            }
+          } catch (e) {
+            console.warn(`[PptxSlideViewer] backend fetch threw, falling back to OPFS:`, e)
+          }
+
+          // 2) backend が取れなかったら OPFS のローカルコピーを使う
+          //    (TTL 切れ / オフライン / バックエンドが落ちた等)
+          if (buffer === null && sessionId) {
+            const blob = await getPptxFromOpfs(sessionId, artifactId)
+            if (blob) {
+              buffer = await blob.arrayBuffer()
+              console.info(
+                `[PptxSlideViewer] loaded ${artifactId} from OPFS fallback`,
+              )
+            }
+          }
+
+          if (buffer === null) {
+            throw new Error('Failed to fetch PPTX from backend or OPFS')
+          }
 
           if (cancelled) return
           await renderer.loadPptx(buffer)
@@ -122,7 +156,7 @@ export const PptxSlideViewer = forwardRef<PptxSlideViewerHandle, PptxSlideViewer
       return () => {
         cancelled = true
       }
-    }, [artifactId, downloadUrl, renderer.ready])
+    }, [artifactId, downloadUrl, sessionId, renderer.ready])
 
     // Render current slide & re-select shape after edits
     const renderAndRefresh = useCallback(

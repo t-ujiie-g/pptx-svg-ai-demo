@@ -1,0 +1,68 @@
+.pipeline-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 8px;
+  font-size: 11px;
+}
+
+.pipeline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, #e5e5ea);
+  background: var(--bg-secondary, #f7f7f8);
+  color: var(--text-primary, #1a1a1a);
+  line-height: 1.4;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.pipeline-chip__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.pipeline-chip__label {
+  font-weight: 500;
+}
+
+.pipeline-chip__detail {
+  font-size: 10px;
+  color: var(--text-secondary, #8e8ea0);
+  margin-left: 2px;
+}
+
+/* state colors */
+.pipeline-chip--pending .pipeline-chip__dot { background: #d1d5db; }
+.pipeline-chip--pending { opacity: 0.55; }
+
+.pipeline-chip--running .pipeline-chip__dot {
+  background: #4a3aff;
+  animation: pipeline-pulse 1.2s ease-in-out infinite;
+}
+.pipeline-chip--running { border-color: #4a3aff44; }
+
+.pipeline-chip--completed .pipeline-chip__dot { background: #16a34a; }
+.pipeline-chip--completed { border-color: #16a34a55; }
+
+.pipeline-chip--warn .pipeline-chip__dot { background: #f59e0b; }
+.pipeline-chip--warn {
+  border-color: #f59e0b66;
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.pipeline-chip--failed .pipeline-chip__dot { background: #ef4444; }
+.pipeline-chip--failed {
+  border-color: #ef444466;
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+@keyframes pipeline-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.85); }
+}

@@ -1,20 +1,25 @@
 import { forwardRef, useCallback, useRef, useState } from 'react'
 import { PptxArtifactData } from '../services/chatHistory'
 import { PptxSlideViewer, type PptxSlideViewerHandle } from './PptxSlideViewer'
+import { PptxHistoryDropdown } from './PptxHistoryDropdown'
 import { downloadFromApi } from '../config'
 import './PptxPanel.css'
 
 interface PptxPanelProps {
   artifact: PptxArtifactData
+  /** Owning chat session id (used as OPFS partition key) */
+  sessionId?: string | null
   maximized: boolean
   onToggleMaximize: () => void
   onClose: () => void
   /** Auto-maximize when user selects a shape for editing */
   onRequestMaximize?: () => void
+  /** Switch the active artifact (used by the history dropdown) */
+  onSelectArtifact?: (artifact: PptxArtifactData) => void
 }
 
 export const PptxPanel = forwardRef<PptxSlideViewerHandle, PptxPanelProps>(
-  function PptxPanel({ artifact, maximized, onToggleMaximize, onClose, onRequestMaximize }, ref) {
+  function PptxPanel({ artifact, sessionId, maximized, onToggleMaximize, onClose, onRequestMaximize, onSelectArtifact }, ref) {
     const internalRef = useRef<PptxSlideViewerHandle>(null)
     const [modified, setModified] = useState(false)
     const handleDownload = () => downloadFromApi(artifact.downloadUrl, artifact.filename)
@@ -55,6 +60,13 @@ export const PptxPanel = forwardRef<PptxSlideViewerHandle, PptxPanelProps>(
             <span>{artifact.filename}</span>
           </div>
           <div className="pptx-panel-actions">
+            {onSelectArtifact && (
+              <PptxHistoryDropdown
+                sessionId={sessionId ?? null}
+                activeArtifactId={artifact.artifactId}
+                onSelect={onSelectArtifact}
+              />
+            )}
             <button
               className="pptx-panel-action-btn"
               onClick={handleDownloadSmart}
@@ -102,6 +114,7 @@ export const PptxPanel = forwardRef<PptxSlideViewerHandle, PptxPanelProps>(
             artifactId={artifact.artifactId}
             filename={artifact.filename}
             downloadUrl={artifact.downloadUrl}
+            sessionId={sessionId}
             maximized={maximized}
             onSelectionChange={handleSelectionChange}
             onModifiedChange={setModified}

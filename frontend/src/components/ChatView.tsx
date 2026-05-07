@@ -6,11 +6,14 @@ import { useFileAttachment, ACCEPT_TYPES } from '../hooks/useFileAttachment'
 import { useTemplateGeneration } from '../hooks/useTemplateGeneration'
 import { ChatMessageList } from './ChatMessageList'
 import { FilePreviewArea } from './FilePreviewArea'
+import { ModeSelector } from './ModeSelector'
+import { PipelineProgress } from './PipelineProgress'
 import { TemplateConfirmModal } from './TemplateConfirmModal'
 import { TemplateGeneratingOverlay } from './TemplateGeneratingOverlay'
 import { SavedPromptsPopup } from './SavedPromptsPopup'
 import { TemplateEditorModal } from './TemplateEditorModal'
 import { TemplateExecuteModal } from './TemplateExecuteModal'
+import { ModeSpec } from '../types/modeSpec'
 import { config } from '../config'
 import './ChatView.css'
 
@@ -27,10 +30,16 @@ export function ChatView({ session, onUpdateSession, onNewChat, onPptxArtifactCh
   const [input, setInput] = useState('')
   const [isComposing, setIsComposing] = useState(false)
   const [savedPromptsOpen, setSavedPromptsOpen] = useState(false)
+  const [modeSpec, setModeSpec] = useState<ModeSpec | null>(null)
+  const [styleRefFile, setStyleRefFile] = useState<File | null>(null)
+  // バックエンドにアップロード済みのstyle_ref artifact IDを保持し、次回送信時に
+  // 同じ参照を使い回せるようにする。新しい styleRefFile が選ばれた瞬間に消す。
+  const [styleRefArtifactId, setStyleRefArtifactId] = useState<string | undefined>(undefined)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { isLoading, streamingState, sendMessage } = useChat({
+    sessionId: session?.id ?? null,
     onUpdateSession,
     onPptxArtifactChange,
   })
@@ -65,10 +74,35 @@ export function ChatView({ session, onUpdateSession, onNewChat, onPptxArtifactCh
     if (syncEditedPptx) {
       await syncEditedPptx()
     }
-    sendMessage(input, attachedFiles, session, onNewChat, createAttachmentMeta, activePptxArtifactId)
+    sendMessage(
+      input, attachedFiles, session, onNewChat, createAttachmentMeta, activePptxArtifactId,
+      {
+        modeSpec,
+        styleRefFile,
+        styleRefArtifactId,
+      },
+    )
     setInput('')
     setAttachedFiles([])
+    // styleRefFile はクリアしない: backend から mode_spec SSE で artifact_id が
+    // 返ってきたタイミングで sync 用 useEffect が安全にクリアする。
   }
+
+  const handleSelectStyleRefFile = (file: File | null) => {
+    setStyleRefFile(file)
+    // ファイル選択 / クリアどちらでも過去の artifact_id を無効化
+    setStyleRefArtifactId(undefined)
+  }
+
+  // backend が styleRefFile を保存し artifact_id を mode_spec SSE で返してきたら、
+  // ローカル state に格納し、ファイルオブジェクトはクリア (次回 send で再送しない)。
+  const appliedStyleRefArtifactId = streamingState.appliedStyleRefArtifactId
+  useEffect(() => {
+    if (appliedStyleRefArtifactId && appliedStyleRefArtifactId !== styleRefArtifactId) {
+      setStyleRefArtifactId(appliedStyleRefArtifactId)
+      setStyleRefFile(null)
+    }
+  }, [appliedStyleRefArtifactId, styleRefArtifactId])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposing) return
@@ -137,6 +171,22 @@ export function ChatView({ session, onUpdateSession, onNewChat, onPptxArtifactCh
             files={attachedFiles}
             onRemove={removeFile}
             getPreviewUrl={getPreviewUrl}
+          />
+
+          {/* パイプライン進捗 (style/preservation/critic/...). ストリーム中で
+              なくても直前の結果が残っていれば表示。チャット上部に流されず
+              入力欄のすぐ近くで常に視認できる位置。 */}
+          <PipelineProgress state={streamingState} />
+
+          <ModeSelector
+            text={input}
+            targetArtifactId={activePptxArtifactId}
+            styleRefArtifactId={styleRefArtifactId}
+            modeSpec={modeSpec}
+            onChangeModeSpec={setModeSpec}
+            styleRefFile={styleRefFile}
+            onSelectStyleRefFile={handleSelectStyleRefFile}
+            disabled={isLoading}
           />
 
           <div className="input-wrapper">

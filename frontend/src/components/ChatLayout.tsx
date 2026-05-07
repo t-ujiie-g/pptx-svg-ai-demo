@@ -3,6 +3,7 @@ import { Sidebar } from './Sidebar'
 import { ChatView } from './ChatView'
 import { PptxPanel } from './PptxPanel'
 import { chatHistoryService, ChatSession, PptxArtifactData } from '../services/chatHistory'
+import { deleteSession as deleteSessionFromOpfs } from '../services/pptxStorage'
 import { useTheme } from '../hooks/useTheme'
 import type { PptxSlideViewerHandle } from './PptxSlideViewer'
 import './ChatLayout.css'
@@ -49,6 +50,8 @@ export function ChatLayout() {
 
   const handleDeleteSession = async (id: string) => {
     await chatHistoryService.deleteSession(id)
+    // OPFS に保存されている当該セッションの PPTX 履歴も一緒に削除
+    void deleteSessionFromOpfs(id)
     setSessions((prev) => prev.filter((s) => s.id !== id))
     if (currentSession?.id === id) {
       const remaining = sessions.filter((s) => s.id !== id)
@@ -62,7 +65,9 @@ export function ChatLayout() {
       const updated = prev.map((s) => (s.id === session.id ? session : s))
       return updated.sort((a, b) => b.updatedAt - a.updatedAt)
     })
-    setCurrentSession(session)
+    // 現在表示中のセッションのみ更新する。ユーザーが他チャットへ移動した後で
+    // 旧セッションのストリームが完了しても、勝手にチャットを戻さないように。
+    setCurrentSession((prev) => (prev?.id === session.id ? session : prev))
   }
 
   const handleClosePptx = () => {
@@ -130,10 +135,12 @@ export function ChatLayout() {
             <PptxPanel
               ref={pptxViewerRef}
               artifact={activePptxArtifact!}
+              sessionId={currentSession?.id ?? null}
               maximized={pptxMaximized}
               onToggleMaximize={() => setPptxMaximized((v) => !v)}
               onClose={handleClosePptx}
               onRequestMaximize={() => setPptxMaximized(true)}
+              onSelectArtifact={setActivePptxArtifact}
             />
           )}
         </div>

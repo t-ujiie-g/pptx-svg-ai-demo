@@ -1,0 +1,123 @@
+.pptx-history {
+  position: relative;
+  display: inline-flex;
+}
+
+.pptx-history__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color, #e5e5ea);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary, #1a1a1a);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.pptx-history__btn:hover {
+  background: var(--bg-hover, #efeff1);
+}
+
+.pptx-history__btn-label {
+  font-weight: 500;
+}
+
+.pptx-history__btn-count {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--accent, #4a3aff);
+  color: #fff;
+  padding: 0 5px;
+  border-radius: 999px;
+  min-width: 14px;
+  text-align: center;
+}
+
+.pptx-history__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 280px;
+  max-width: 380px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e5e5ea);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+}
+
+.pptx-history__empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-secondary, #8e8ea0);
+  font-size: 12px;
+}
+
+.pptx-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pptx-history__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.pptx-history__item:hover {
+  background: var(--bg-hover, #efeff1);
+}
+
+.pptx-history__item--active {
+  background: rgba(74, 58, 255, 0.10);
+  border: 1px solid rgba(74, 58, 255, 0.35);
+}
+
+.pptx-history__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pptx-history__filename {
+  font-size: 12px;
+  color: var(--text-primary, #1a1a1a);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pptx-history__meta {
+  margin-top: 2px;
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-secondary, #8e8ea0);
+}
+
+.pptx-history__dl {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #8e8ea0);
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+}
+
+.pptx-history__dl:hover {
+  color: var(--accent, #4a3aff);
+  background: rgba(74, 58, 255, 0.08);
+}

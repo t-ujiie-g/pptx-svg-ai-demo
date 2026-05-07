@@ -42,6 +42,18 @@ export function downloadFromApi(apiPath: string, filename: string) {
   link.click()
 }
 
+/** Trigger a file download from an in-memory Blob (e.g. OPFS / edited PPTX). */
+export function downloadFromBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 // 型定義
 export type Config = typeof config
 export type Theme = 'light' | 'dark' | 'system'

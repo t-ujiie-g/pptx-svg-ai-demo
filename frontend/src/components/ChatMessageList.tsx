@@ -166,13 +166,21 @@ export function ChatMessageList({
                 onClick={() => onPptxArtifactChange?.(artifact)}
               />
             ))}
-            {streamingState.accumulatedText ? (
+            {streamingState.accumulatedText && (
               <MarkdownRenderer content={streamingState.accumulatedText} />
-            ) : (
-              <div className="typing-indicator">
-                <span></span><span></span><span></span>
-              </div>
             )}
+            {/* 常時表示: ツール実行中・SSE 待ちなど、テキスト合間の沈黙でも
+                「処理が動いている」ことを視覚的に知らせる。テキストが流れて
+                いる時はその直後に小さく付く。done で isLoading=false に
+                なったらバブルごと消える。 */}
+            <div
+              className={`typing-indicator ${
+                streamingState.accumulatedText ? 'typing-indicator--inline' : ''
+              }`}
+              aria-label="処理中"
+            >
+              <span></span><span></span><span></span>
+            </div>
           </div>
         </div>
       )}
