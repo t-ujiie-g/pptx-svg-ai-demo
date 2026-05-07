@@ -64,6 +64,18 @@ def update_artifact(artifact_id: str, data: bytes, filename: str | None = None) 
     if filename:
         artifact.filename = filename
     artifact.created_at = datetime.now()  # refresh TTL
+    # Caches keyed by artifact_id are now stale. Local imports keep these
+    # services optional in stripped-down test envs.
+    try:
+        from src.services.style_cache import invalidate_style
+        invalidate_style(artifact_id)
+    except Exception:
+        pass
+    try:
+        from src.services.entity_extractor import invalidate_entities
+        invalidate_entities(artifact_id)
+    except Exception:
+        pass
     logger.info(f"Updated artifact {artifact_id}: {artifact.filename} ({len(data)} bytes)")
     return True
 

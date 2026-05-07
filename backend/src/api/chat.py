@@ -1,36 +1,58 @@
-"""Chat API endpoint for the frontend."""
+"""Chat API endpoint — SSE stream orchestrating the agent + pipeline.
 
-import base64
+Layout (kept thin so the per-request wiring is easy to follow):
+  - request parsing                  → `chat_request.parse_request`
+  - SSE event vocabulary             → `chat_events`
+  - post-generation pipeline helpers → `chat_pipeline`
+  - this file: endpoint + the v1/v2 retry loop that ties everything together
+"""
+
+from __future__ import annotations
+
 import json
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
-from starlette.datastructures import UploadFile
 
 from src.agents.pptx_agent import clear_pptx_thread_id, set_pptx_thread_id
+from src.agents.preservation_schema import PreservationScore
 from src.agents.root_agent import get_root_agent
 from src.agents.tools.file_bridge import (
     get_request_files,
     set_request_files,
-    store_attached_files,
 )
+from src.api.chat_events import (
+    EVENT_TEXT,
+    EVENT_TEXT_CHUNK,
+    EVENT_TOOL_CALL,
+    EVENT_TOOL_RESULT,
+    PIPELINE_STEP_RETRY_START,
+    make_done_event,
+    make_error_event,
+    make_pipeline_step_event,
+    make_pptx_artifact_event,
+    make_rollback_event,
+    to_sse,
+)
+from src.api.chat_pipeline import (
+    build_retry_message,
+    run_critic_review,
+    run_pairwise_compare,
+    run_preservation_check,
+)
+from src.api.chat_request import ParsedChatRequest, parse_request
+from src.config import settings
 from src.constants import (
-    ALLOWED_UPLOAD_MIME_TYPES,
     APP_NAME,
-    DEFAULT_ARTIFACT_FILENAME,
-    DEFAULT_THREAD_ID,
-    DEFAULT_USER_ID,
-    MAX_UPLOAD_SIZE,
+    CRITIC_MAX_RETRIES,
     PPTX_ARTIFACT_MARKER,
-    PPTX_MIME_TYPE,
 )
-from src.services.artifact_store import get_artifact, store_artifact
-from src.services.pptx_skill import inspect_pptx
+from src.services.artifact_store import get_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +64,10 @@ session_service = InMemorySessionService()
 
 _MARKER_PREFIX = f"{PPTX_ARTIFACT_MARKER} "
 
+
+# ──────────────────────────────────────────────────────────────────────
+# ADK event → SSE adaptation
+# ──────────────────────────────────────────────────────────────────────
 
 def _extract_pptx_artifact(response: object) -> dict | None:
     """Find a `__PPTX_ARTIFACT__ {...}` line in a tool response's stdout.
@@ -64,197 +90,71 @@ def _extract_pptx_artifact(response: object) -> dict | None:
     return None
 
 
-async def _build_pptx_context_parts(
-    pptx_bytes: bytes, artifact_id: str,
-) -> list[types.Part]:
-    """Run pptx_inspect.js and return user-message Parts: text summary + PNG Parts.
+def _emit_for_event(event: object) -> Iterator[tuple[str, str | None]]:
+    """Convert one ADK event into one or more SSE strings.
 
-    Returns a list of parts that should be appended to the user message so
-    Gemini can see the current slide rendering plus structured shape info.
+    Yields `(sse_string, captured_artifact_id_or_none)`. The caller streams
+    the strings and tracks the latest artifact id from the second element.
+    Reused for both v1 and v2 (retry) loops so event-shape parsing isn't
+    duplicated.
     """
-    try:
-        info = await inspect_pptx(pptx_bytes, with_png=True)
-    except Exception as e:
-        logger.error(f"PPTX inspect failed: {e}")
-        return [types.Part(
-            text=f"【添付PPTX（解析失敗）】artifact_id={artifact_id}\nエラー: {e}"
-        )]
+    # Function calls (tool invocation start)
+    if hasattr(event, "get_function_calls") and callable(event.get_function_calls):
+        for fc in event.get_function_calls() or []:
+            tool_name = getattr(fc, "name", "unknown")
+            yield to_sse({
+                "type": EVENT_TOOL_CALL, "tool": tool_name, "status": "calling",
+            }), None
 
-    lines = [
-        f"【編集中PPTX — artifact_id: {artifact_id}】",
-        f"スライド数: {info.get('slide_count', 0)}",
-        f"スライドサイズ: {info.get('slide_width_emu', 0)} x "
-        f"{info.get('slide_height_emu', 0)} EMU",
-        "",
-        "各スライドの見た目（PNG）とシェイプ構造を続けて添付します。",
-        "編集するには pptx スキルの scripts/edit_pptx.py を run_skill_script 経由で使用してください。",
-        f'artifact_id="{artifact_id}"',
-        "",
-    ]
-    for slide in info.get("slides", []):
-        si = slide.get("slide_idx", 0)
-        lines.append(f"--- スライド {si} ---")
-        for shape in slide.get("shapes", []):
-            idx = shape.get("idx", "?")
-            stype = shape.get("shape_type", "?")
-            x, y = shape.get("x", 0), shape.get("y", 0)
-            cx, cy = shape.get("cx", 0), shape.get("cy", 0)
-            fill = shape.get("fill_hex", "")
-            rot = shape.get("rot", 0)
-            desc = (
-                f"  shape[{idx}] type={stype} "
-                f"pos=({x},{y}) size=({cx},{cy}) rot={rot}"
-            )
-            if fill:
-                desc += f" fill=#{fill}"
-            lines.append(desc)
-            for tr in shape.get("text_runs", []):
-                lines.append(f"    text[p{tr['pi']},r{tr['ri']}]: {tr['text']!r}")
-            tbl = shape.get("table")
-            if tbl:
-                lines.append(
-                    f"    table rows={tbl.get('rows', 0)} cols={tbl.get('cols', 0)}"
-                )
-                for r, row in enumerate(tbl.get("cells", [])):
-                    for c, cell in enumerate(row):
-                        suffix = ""
-                        if cell.get("fill_hex"):
-                            suffix = f" fill=#{cell['fill_hex']}"
-                        text = cell.get("text", "")
-                        lines.append(f"      cell[{r},{c}]{suffix}: {text!r}")
-        lines.append("")
+    # Function responses (tool result)
+    if hasattr(event, "get_function_responses") and callable(event.get_function_responses):
+        for fr in event.get_function_responses() or []:
+            tool_name = getattr(fr, "name", "unknown")
+            fr_response = getattr(fr, "response", None)
 
-    parts: list[types.Part] = [types.Part(text="\n".join(lines))]
-    for slide in info.get("slides", []):
-        png_b64 = slide.get("png_base64")
-        if not png_b64:
-            continue
-        parts.append(types.Part(text=f"[スライド {slide.get('slide_idx', 0)} の見た目]"))
-        parts.append(types.Part.from_bytes(
-            data=base64.b64decode(png_b64),
-            mime_type="image/png",
-        ))
-    return parts
+            # Log skill stdout (non-marker lines only) for debugging
+            if isinstance(fr_response, dict) and "stdout" in fr_response:
+                stdout_text = fr_response["stdout"]
+                if stdout_text:
+                    for line in stdout_text.splitlines():
+                        if not line.startswith(PPTX_ARTIFACT_MARKER):
+                            logger.info(f"Skill script [{tool_name}]: {line}")
+
+            artifact_info = _extract_pptx_artifact(fr_response)
+            captured_id: str | None = None
+            if artifact_info:
+                logger.info(f"PPTX artifact detected for tool: {tool_name}")
+                captured_id = artifact_info.get("artifact_id") or None
+                yield to_sse(make_pptx_artifact_event(artifact_info)), captured_id
+
+            yield to_sse({
+                "type": EVENT_TOOL_RESULT, "tool": tool_name, "status": "completed",
+            }), None
+
+    # Text content. `event.content.parts` may be None when the model returns
+    # only function calls; guard against that to avoid `for ... in None`.
+    if (
+        hasattr(event, "content")
+        and event.content
+        and getattr(event.content, "parts", None)
+    ):
+        for part in event.content.parts:
+            if hasattr(part, "text") and part.text:
+                is_partial = getattr(event, "partial", False)
+                yield to_sse({
+                    "type": EVENT_TEXT_CHUNK if is_partial else EVENT_TEXT,
+                    "content": part.text,
+                }), None
 
 
-async def _parse_request(
-    request: Request,
-) -> tuple[list[types.Part], str, str, dict[str, dict], list[dict]]:
-    """JSONまたはmultipartリクエストをパースする。
-
-    Returns:
-        Tuple of (parts, thread_id, user_id, attached_files, uploaded_pptx_artifacts).
-        uploaded_pptx_artifacts contains dicts with artifact_id/filename/size_bytes/download_url
-        for each PPTX file uploaded in this request.
-
-    Raises:
-        ValueError: If the request body is invalid.
-    """
-    content_type = request.headers.get("content-type", "")
-
-    if "multipart/form-data" in content_type:
-        form = await request.form()
-
-        # テキストフィールド取得
-        text = str(form.get("text", ""))
-        thread_id = str(form.get("threadId", DEFAULT_THREAD_ID))
-        user_id = str(form.get("userId", DEFAULT_USER_ID))
-        pptx_artifact_id = str(form.get("pptxArtifactId", ""))
-
-        parts: list[types.Part] = []
-        uploaded_pptx: list[dict] = []
-        if text.strip():
-            parts.append(types.Part(text=text))
-
-        # pptx_artifact_id が指定されている場合、既存アーティファクトを
-        # pptx_inspect.js で解析し、PNG + 構造情報を user message に付加
-        if pptx_artifact_id:
-            artifact = get_artifact(pptx_artifact_id)
-            if artifact:
-                logger.info(
-                    f"Chat context using existing artifact {pptx_artifact_id} "
-                    f"({len(artifact.data)} bytes, filename={artifact.filename})"
-                )
-                pptx_parts = await _build_pptx_context_parts(
-                    artifact.data, pptx_artifact_id,
-                )
-                parts.extend(pptx_parts)
-            else:
-                logger.warning(
-                    f"pptxArtifactId={pptx_artifact_id} not found in artifact store"
-                )
-
-        # ファイル取得
-        raw_files: list[dict] = []
-        for key in form:
-            value = form[key]
-            if isinstance(value, UploadFile):
-                mime_type = value.content_type or ""
-                if mime_type not in ALLOWED_UPLOAD_MIME_TYPES:
-                    raise ValueError(f"サポートされていないファイル形式です: {mime_type}")
-
-                file_bytes = await value.read()
-                if len(file_bytes) > MAX_UPLOAD_SIZE:
-                    limit_mb = MAX_UPLOAD_SIZE // (1024 * 1024)
-                    raise ValueError(
-                        f"ファイルサイズが上限({limit_mb}MB)を超えています: {value.filename}"
-                    )
-
-                if mime_type == PPTX_MIME_TYPE:
-                    # PPTX: アーティファクトに保存して pptx_inspect.js で解析、
-                    # PNG + 構造情報を user message に付加
-                    fname = value.filename or DEFAULT_ARTIFACT_FILENAME
-                    aid = store_artifact(
-                        thread_id=thread_id,
-                        filename=fname,
-                        data=file_bytes,
-                    )
-                    uploaded_pptx.append({
-                        "artifact_id": aid,
-                        "filename": fname,
-                        "size_bytes": len(file_bytes),
-                        "download_url": f"/artifacts/{aid}",
-                    })
-                    pptx_parts = await _build_pptx_context_parts(file_bytes, aid)
-                    parts.extend(pptx_parts)
-                else:
-                    # 画像/PDF等はGeminiインラインパーツとして渡す
-                    parts.append(types.Part.from_bytes(data=file_bytes, mime_type=mime_type))
-
-                # ファイルブリッジ用
-                raw_files.append({
-                    "file_name": value.filename or "unnamed",
-                    "mime_type": mime_type,
-                    "data_bytes": file_bytes,
-                })
-
-        if not parts:
-            raise ValueError("テキストまたはファイルを入力してください")
-
-        attached_files = store_attached_files(raw_files) if raw_files else {}
-        return parts, thread_id, user_id, attached_files, uploaded_pptx
-
-    # JSON リクエスト（従来互換）
-    body = await request.json()
-    messages = body.get("messages", [])
-    if not messages:
-        raise ValueError("No messages provided")
-
-    last_message = _extract_last_user_message(messages)
-    if not last_message:
-        raise ValueError("No user message found")
-
-    thread_id = body.get("threadId", DEFAULT_THREAD_ID)
-    user_id = body.get("userId", DEFAULT_USER_ID)
-    parts = [types.Part(text=last_message)]
-    return parts, thread_id, user_id, {}, []
-
+# ──────────────────────────────────────────────────────────────────────
+# Per-request stores (file_bridge + per-thread state)
+# ──────────────────────────────────────────────────────────────────────
 
 def _setup_request_stores(
     thread_id: str,
     attached_files: dict[str, dict] | None,
 ) -> None:
-    """モジュールレベルストアにファイルをセットする。"""
     if attached_files:
         existing = get_request_files(thread_id)
         existing.update(attached_files)
@@ -263,162 +163,219 @@ def _setup_request_stores(
 
 
 async def _cleanup_request_stores(thread_id: str = "") -> None:
-    """リクエストストアをクリーンアップする。"""
     clear_pptx_thread_id()
 
 
 async def _get_or_create_session(user_id: str, thread_id: str):
-    """ADK セッションを取得または新規作成する。"""
     session = await session_service.get_session(
-        app_name=APP_NAME,
-        user_id=user_id,
-        session_id=thread_id,
+        app_name=APP_NAME, user_id=user_id, session_id=thread_id,
     )
     if session is None:
         session = await session_service.create_session(
-            app_name=APP_NAME,
-            user_id=user_id,
-            session_id=thread_id,
+            app_name=APP_NAME, user_id=user_id, session_id=thread_id,
         )
     return session
 
 
-def _extract_last_user_message(messages: list[dict]) -> str:
-    """Extract the last user message from the messages list."""
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                return content
-            elif isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        return part.get("text", "")
-                    elif isinstance(part, str):
-                        return part
-    return ""
+# ──────────────────────────────────────────────────────────────────────
+# Streaming orchestrator
+# ──────────────────────────────────────────────────────────────────────
 
+async def _stream_agent_events(parsed: ParsedChatRequest) -> AsyncGenerator[str, None]:
+    """Stream agent events as SSE format, then run the post-generation pipeline.
 
-async def _stream_agent_events(
-    parts: list[types.Part],
-    thread_id: str,
-    user_id: str,
-    attached_files: dict[str, dict] | None = None,
-    uploaded_pptx: list[dict] | None = None,
-) -> AsyncGenerator[str, None]:
-    """Stream agent events as SSE format."""
+    Sequence:
+      1. mode_spec / style_extracted / uploaded pptx — sent before the agent
+      2. v1 agent run (streamed)
+      3. v1 preservation + critic
+      4. if verdict=retry: v2 agent run + v2 preservation + critic + pairwise
+         + optional rollback
+      5. done
+    """
+    # ── pre-agent SSE: mode + style + uploaded artifacts ───────────────
+    yield to_sse(parsed.mode_spec_event)
+    if parsed.style_event is not None:
+        yield to_sse(parsed.style_event)
+    for info in parsed.uploaded_pptx:
+        yield to_sse({"type": "pptx_artifact", **info})
 
-    # アップロードされたPPTXがあれば、エージェント処理前に即座にプレビュー用イベントを送出
-    for info in uploaded_pptx or []:
-        pptx_event = {"type": "pptx_artifact", **info}
-        yield f"data: {json.dumps(pptx_event, ensure_ascii=False)}\n\n"
-
-    root_agent = await get_root_agent(thread_id=thread_id)
+    intent = parsed.mode_spec.intent
+    style_source_kind = parsed.mode_spec.style_source.kind
 
     runner = Runner(
-        agent=root_agent,
+        agent=await get_root_agent(thread_id=parsed.thread_id),
         app_name=APP_NAME,
         session_service=session_service,
     )
+    await _get_or_create_session(parsed.user_id, parsed.thread_id)
+    _setup_request_stores(parsed.thread_id, parsed.attached_files)
 
-    await _get_or_create_session(user_id, thread_id)
-    _setup_request_stores(thread_id, attached_files)
-
-    content = types.Content(role="user", parts=parts)
+    final_output_artifact_id: str | None = None
 
     try:
+        # ── v1: 初回エージェント実行 ───────────────────────────────────
         async for event in runner.run_async(
-            user_id=user_id,
-            session_id=thread_id,
-            new_message=content,
+            user_id=parsed.user_id,
+            session_id=parsed.thread_id,
+            new_message=types.Content(role="user", parts=parsed.parts),
         ):
-            # Check for function calls (tool invocation)
-            if hasattr(event, "get_function_calls") and callable(event.get_function_calls):
-                function_calls = event.get_function_calls()
-                if function_calls:
-                    for fc in function_calls:
-                        tool_name = getattr(fc, "name", "unknown")
-                        event_data = {
-                            "type": "tool_call",
-                            "tool": tool_name,
-                            "status": "calling",
-                        }
-                        yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+            for sse_str, captured_id in _emit_for_event(event):
+                yield sse_str
+                if captured_id:
+                    final_output_artifact_id = captured_id
 
-            # Check for function responses (tool results)
-            if hasattr(event, "get_function_responses") and callable(event.get_function_responses):
-                function_responses = event.get_function_responses()
-                if function_responses:
-                    for fr in function_responses:
-                        tool_name = getattr(fr, "name", "unknown")
+        v1_artifact_id = final_output_artifact_id
 
-                        # Log skill script output for debugging
-                        fr_response = getattr(fr, "response", None)
-                        if isinstance(fr_response, dict) and "stdout" in fr_response:
-                            stdout_text = fr_response["stdout"]
-                            if stdout_text:
-                                for line in stdout_text.splitlines():
-                                    if not line.startswith(PPTX_ARTIFACT_MARKER):
-                                        logger.info(f"Skill script [{tool_name}]: {line}")
+        # Phase 3: target 保全チェック (v1)
+        preservation_score: PreservationScore | None = None
+        if parsed.target_entities is not None and v1_artifact_id:
+            preservation_event, preservation_score = await run_preservation_check(
+                target=parsed.target_entities,
+                output_artifact_id=v1_artifact_id,
+                intent=intent,
+            )
+            yield to_sse(preservation_event)
 
-                        # PPTX artifact marker detection — skill scripts
-                        # (edit_pptx.py / generate_pptx.py) print a marker
-                        # line on stdout that chat.py surfaces via SSE.
-                        artifact_info = _extract_pptx_artifact(fr_response)
-                        if artifact_info:
-                            logger.info(
-                                f"PPTX artifact detected for tool: {tool_name}"
-                            )
-                            pptx_event = {
-                                "type": "pptx_artifact",
-                                "artifact_id": artifact_info.get("artifact_id", ""),
-                                "filename": artifact_info.get("filename", ""),
-                                "size_bytes": artifact_info.get("size_bytes", 0),
-                                "download_url": artifact_info.get("download_url", ""),
-                            }
-                            yield f"data: {json.dumps(pptx_event, ensure_ascii=False)}\n\n"
+        # Phase 4: Critic レビュー (v1) — feature flag で OFF にできる
+        critic_v1_event: dict | None = None
+        if v1_artifact_id and settings.feature_critic_review:
+            critic_v1_event = await run_critic_review(
+                output_artifact_id=v1_artifact_id,
+                user_text=parsed.user_text,
+                intent=intent,
+                style_source_kind=style_source_kind,
+                preservation=preservation_score,
+            )
+            yield to_sse(critic_v1_event)
 
-                        event_data = {
-                            "type": "tool_result",
-                            "tool": tool_name,
-                            "status": "completed",
-                        }
-                        yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+        # Phase 4.5: verdict=retry なら 1 回だけ再生成して比較
+        v1_verdict = (critic_v1_event or {}).get("result", {}).get("verdict")
+        if (
+            settings.feature_critic_retry
+            and CRITIC_MAX_RETRIES > 0
+            and v1_artifact_id
+            and v1_verdict == "retry"
+        ):
+            async for sse in _run_retry_loop(
+                runner=runner,
+                parsed=parsed,
+                v1_artifact_id=v1_artifact_id,
+                critic_v1_event=critic_v1_event or {},
+                preservation_score_v1=preservation_score,
+            ):
+                yield sse
 
-            # Check for text content
-            if hasattr(event, "content") and event.content:
-                for part in event.content.parts:
-                    if hasattr(part, "text") and part.text:
-                        is_partial = getattr(event, "partial", False)
-                        event_data = {
-                            "type": "text_chunk" if is_partial else "text",
-                            "content": part.text,
-                        }
-                        yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
-
-        # Send completion event
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        yield to_sse(make_done_event())
 
     except Exception as e:
         logger.error(f"Error streaming agent events: {e}", exc_info=True)
-        error_data = {"type": "error", "message": str(e)}
-        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        yield to_sse(make_error_event(str(e)))
     finally:
-        await _cleanup_request_stores(thread_id)
+        await _cleanup_request_stores(parsed.thread_id)
 
+
+async def _run_retry_loop(
+    *,
+    runner: Runner,
+    parsed: ParsedChatRequest,
+    v1_artifact_id: str,
+    critic_v1_event: dict,
+    preservation_score_v1: PreservationScore | None,
+) -> AsyncGenerator[str, None]:
+    """Phase 4.5: stream the v2 retry, then pairwise + optional rollback."""
+    yield to_sse(make_pipeline_step_event(PIPELINE_STEP_RETRY_START))
+
+    retry_content = build_retry_message(
+        critic_result=critic_v1_event,
+        preservation_score=preservation_score_v1,
+    )
+
+    v2_artifact_id: str | None = None
+    async for event in runner.run_async(
+        user_id=parsed.user_id,
+        session_id=parsed.thread_id,
+        new_message=retry_content,
+    ):
+        for sse_str, captured_id in _emit_for_event(event):
+            yield sse_str
+            if captured_id:
+                v2_artifact_id = captured_id
+
+    if v2_artifact_id is None:
+        logger.info("Retry produced no new artifact; keeping v1")
+        return
+    if v2_artifact_id == v1_artifact_id:
+        return
+
+    intent = parsed.mode_spec.intent
+    style_source_kind = parsed.mode_spec.style_source.kind
+
+    # v2 の preservation + critic
+    preservation_score_v2: PreservationScore | None = None
+    if parsed.target_entities is not None:
+        preservation_event_v2, preservation_score_v2 = await run_preservation_check(
+            target=parsed.target_entities,
+            output_artifact_id=v2_artifact_id,
+            intent=intent,
+        )
+        yield to_sse(preservation_event_v2)
+
+    critic_v2_event = await run_critic_review(
+        output_artifact_id=v2_artifact_id,
+        user_text=parsed.user_text,
+        intent=intent,
+        style_source_kind=style_source_kind,
+        preservation=preservation_score_v2,
+    )
+    yield to_sse(critic_v2_event)
+
+    # ペアワイズ比較で勝者を決定
+    weighted_v1 = critic_v1_event.get("result", {}).get("weighted")
+    weighted_v2 = critic_v2_event.get("result", {}).get("weighted")
+    pairwise_event, winner_id = await run_pairwise_compare(
+        v1_artifact_id=v1_artifact_id,
+        v2_artifact_id=v2_artifact_id,
+        user_text=parsed.user_text,
+        intent=intent,
+        weighted_v1=weighted_v1,
+        weighted_v2=weighted_v2,
+    )
+    yield to_sse(pairwise_event)
+
+    # v1 が勝者なら rollback: フロントは v1 をアクティブに戻す
+    if winner_id == v1_artifact_id:
+        yield to_sse(make_rollback_event(
+            to_artifact_id=v1_artifact_id,
+            reason="pairwise: v1 was preferred over v2",
+        ))
+        # フロントは latest pptx_artifact を表示するので、v1 を再送して preview を戻す
+        v1_artifact = get_artifact(v1_artifact_id)
+        if v1_artifact:
+            yield to_sse(make_pptx_artifact_event({
+                "artifact_id": v1_artifact_id,
+                "filename": v1_artifact.filename,
+                "size_bytes": len(v1_artifact.data),
+                "download_url": f"/artifacts/{v1_artifact_id}",
+            }))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Endpoint
+# ──────────────────────────────────────────────────────────────────────
 
 @router.post("/chat/stream")
 async def chat_stream_endpoint(request: Request) -> StreamingResponse:
     """Streaming chat endpoint using Server-Sent Events (SSE)."""
     try:
-        parts, thread_id, user_id, attached_files, uploaded_pptx = await _parse_request(request)
+        parsed = await parse_request(request)
     except (ValueError, Exception) as e:
         logger.error(f"Failed to parse request: {e}")
-        error_gen = _error_generator(str(e))
-        return StreamingResponse(error_gen, media_type="text/event-stream")
+        return StreamingResponse(
+            _error_generator(str(e)), media_type="text/event-stream",
+        )
 
     return StreamingResponse(
-        _stream_agent_events(parts, thread_id, user_id, attached_files, uploaded_pptx),
+        _stream_agent_events(parsed),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -429,5 +386,4 @@ async def chat_stream_endpoint(request: Request) -> StreamingResponse:
 
 
 async def _error_generator(message: str) -> AsyncGenerator[str, None]:
-    """Generate an error event for SSE."""
-    yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+    yield to_sse(make_error_event(message))
