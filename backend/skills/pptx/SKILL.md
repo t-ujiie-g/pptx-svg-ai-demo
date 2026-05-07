@@ -13,6 +13,8 @@ license: Proprietary. LICENSE.txt has complete terms
 | Read/analyze content | ユーザーメッセージの PNG + 構造情報 を直接見る |
 | Edit existing PPTX | `run_skill_script(skill_name="pptx", script_path="scripts/edit_pptx.py", ...)` — [editing.md](references/editing.md) |
 | Create from scratch | `run_skill_script(skill_name="pptx", script_path="scripts/generate_pptx.py", ...)` — [pptxgenjs.md](references/pptxgenjs.md) |
+| Apply extracted style | StyleSpec ブロックを読んで palette/typography/templates を反映 — [style_application.md](references/style_application.md) |
+| Copy template slide | edit_pptx.py の `copy_slide_from_artifact` op で style_ref のスライドをそのまま流用 — [style_application.md](references/style_application.md#コピー方式) |
 
 ---
 

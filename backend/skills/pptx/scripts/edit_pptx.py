@@ -78,6 +78,12 @@ Supported operations:
     {"type":"duplicate_slide", "source":i, "insert_after":j}
     {"type":"delete_slide", "slide":i}
     {"type":"reorder_slides", "order":[2,0,1,3]}
+    {"type":"copy_slide_from_artifact",
+     "source_artifact_id":"...", "src_slide":i, "insert_at":0}
+       Copy a slide from a different PPTX artifact (e.g. style_ref) into the
+       current deck. Use this for cover / agenda / closing template fidelity.
+       After copy, follow up with `text` ops to swap placeholders. Returns
+       {"skipped_pictures": N} — embedded images don't cross packages.
 
 Output (stdout, last line):
     __PPTX_ARTIFACT__ {"artifact_id":"...","filename":"...",
@@ -552,6 +558,88 @@ def op_reorder_slides(prs, op):
         sldIdLst.append(sld_ids[idx])
 
 
+def op_copy_slide_from_artifact(prs, op):
+    """Copy one slide from a *different* PPTX artifact into the current deck.
+
+    Used for "template fidelity": instead of asking the LLM to redraw a cover
+    from extracted Layer B coordinates, fetch the reference artifact's actual
+    slide and reuse it byte-for-byte. After copying, follow up with `text` ops
+    to substitute placeholders ("<<TITLE>>" → the user's actual title).
+
+    Args:
+      source_artifact_id: artifact id of the source PPTX (typically style_ref)
+      src_slide: 0-based slide index to copy from the source
+      insert_at: where to place the copy in the destination (default: end).
+                 Use 0 to make the copied slide the new cover.
+
+    Limitations:
+      Embedded pictures are skipped (cross-package media copy is non-trivial).
+      The result returns `skipped_pictures: N`. Cover/agenda/closing slides
+      that consist of text + shapes + palette colors transfer cleanly.
+    """
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    source_artifact_id = op["source_artifact_id"]
+    src_slide_idx = op["src_slide"]
+    insert_at = op.get("insert_at")
+
+    # Fetch the source PPTX
+    src_bytes = fetch_artifact(source_artifact_id)
+    src_prs = Presentation(io.BytesIO(src_bytes))
+
+    if not (0 <= src_slide_idx < len(src_prs.slides)):
+        raise ValueError(
+            f"src_slide {src_slide_idx} out of range "
+            f"(source has {len(src_prs.slides)} slides)"
+        )
+    src_slide = src_prs.slides[src_slide_idx]
+
+    # Pick a layout in the destination. Prefer same-name match, fall back to
+    # the first layout. Layout choice mostly affects placeholders (which we
+    # clear anyway) so the precise pick rarely matters.
+    src_layout_name = src_slide.slide_layout.name
+    target_layout = next(
+        (lay for lay in prs.slide_layouts if lay.name == src_layout_name),
+        prs.slide_layouts[0],
+    )
+    new_slide = prs.slides.add_slide(target_layout)
+
+    # Strip default placeholder shapes so the copied content stands on its own
+    for shp in list(new_slide.shapes):
+        shp.element.getparent().remove(shp.element)
+
+    skipped_pictures = 0
+    for shp in src_slide.shapes:
+        # Pictures hold an external rId pointing to a media part inside the
+        # source package — we can't drop the same XML into a different package.
+        # Skip with a count so the agent can decide whether to add_image
+        # afterwards.
+        if shp.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            skipped_pictures += 1
+            continue
+        new_slide.shapes._spTree.insert_element_before(
+            deepcopy(shp.element), "p:extLst",
+        )
+
+    # Reposition the new slide if requested. Newly added slides land at the
+    # end; we move them to insert_at.
+    if insert_at is not None:
+        sldIdLst = prs.slides._sldIdLst
+        sld_ids = list(sldIdLst)
+        new_id = sld_ids[-1]
+        sldIdLst.remove(new_id)
+        if insert_at >= len(sld_ids) - 1:
+            sldIdLst.append(new_id)
+        else:
+            sldIdLst.insert(insert_at, new_id)
+
+    return {
+        "src_slide": src_slide_idx,
+        "skipped_pictures": skipped_pictures,
+        "shape_count": len(list(new_slide.shapes)),
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Table operations
 # ──────────────────────────────────────────────────────────────────────
@@ -717,6 +805,7 @@ OP_HANDLERS = {
     "duplicate_slide": op_duplicate_slide,
     "delete_slide": op_delete_slide,
     "reorder_slides": op_reorder_slides,
+    "copy_slide_from_artifact": op_copy_slide_from_artifact,
 }
 
 
