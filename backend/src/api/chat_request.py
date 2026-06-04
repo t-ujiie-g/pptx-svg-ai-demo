@@ -127,6 +127,10 @@ async def build_pptx_context_parts(
         "各スライドの見た目(PNG)とシェイプ構造を続けて添付します。",
         "",
     ]
+    # スライド寸法。シェイプ座標を「スライド比%」に正規化して LLM のはみ出し
+    # 判断を助ける（pptx-skill の percent-coordinate モデルの取り込み）。
+    sw = info.get("slide_width_emu", 0) or 0
+    sh = info.get("slide_height_emu", 0) or 0
     for slide in info.get("slides", []):
         si = slide.get("slide_idx", 0)
         lines.append(f"--- スライド {si} ---")
@@ -141,6 +145,14 @@ async def build_pptx_context_parts(
                 f"  shape[{idx}] type={stype} "
                 f"pos=({x},{y}) size=({cx},{cy}) rot={rot}"
             )
+            if sw and sh:
+                desc += (
+                    f" ≈pos({x / sw * 100:.0f}%,{y / sh * 100:.0f}%)"
+                    f" size({cx / sw * 100:.0f}%x{cy / sh * 100:.0f}%)"
+                )
+                # スライド枠を超える配置は overflow として明示（Critic の減点軸）。
+                if x < 0 or y < 0 or x + cx > sw or y + cy > sh:
+                    desc += " ⚠overflow"
             if fill:
                 desc += f" fill=#{fill}"
             lines.append(desc)

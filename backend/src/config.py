@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # without touching agent code. Each agent points at one of these tiers
     # (or a direct override) below.
     model_tier_high: str = "gemini-3.1-pro-preview"
-    model_tier_mid: str = "gemini-3-flash-preview"
+    model_tier_mid: str = "gemini-3.5-flash"
     model_tier_lite: str = "gemini-3.1-flash-lite-preview"
 
     # ──────────────────────────────────────────────────────────────────

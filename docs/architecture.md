@@ -183,7 +183,7 @@ quota / コスト制約に応じて段階を OFF にできる:
 `config.py` の tier 抽象化:
 ```
 MODEL_TIER_HIGH = "gemini-3.1-pro-preview"      # 推論重 / Critic v2 / pptx_agent
-MODEL_TIER_MID  = "gemini-3-flash-preview"       # root / search / critic
+MODEL_TIER_MID  = "gemini-3.5-flash"             # root / search / critic
 MODEL_TIER_LITE = "gemini-3.1-flash-lite-preview"  # style / entity 抽出
 ```
 
